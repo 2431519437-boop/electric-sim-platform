@@ -26,6 +26,7 @@
 node scripts/e2e/picker.test.mjs   # 实验选择页：进入/切换/回退
 node scripts/e2e/wires.test.mjs    # 导线选中与单独删除
 node scripts/e2e/undo.test.mjs     # 删除导线后撤销
+node scripts/e2e/erase.test.mjs    # 三模式切换 + 删除灵敏度（屏幕空间拾取）
 ```
 
 ## 说明
