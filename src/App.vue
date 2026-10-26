@@ -1,5 +1,12 @@
 <template>
   <div class="app">
+    <!-- 实验选择页：未指定 ?exp= 时先显示 -->
+    <ExperimentPicker
+      v-if="picking"
+      :experiments="experimentsForPicker"
+      @pick="startExperiment"
+    />
+
     <!-- 顶栏 -->
     <header class="appbar">
       <div class="brand">
@@ -153,12 +160,19 @@ import {
   authApi,
   getApiBase,
 } from './api/client.js'
-import { resolveExperiment } from './experiments/index.js'
+import { resolveExperiment, getExperiment, listExperiments } from './experiments/index.js'
+import ExperimentPicker from './components/ExperimentPicker.vue'
 
 /* ================= 当前实验配置 ================= */
-// 过渡期用 ?exp=<id> 切换；阶段二接入实验选择页后改为读路由/本地存储
-const experiment = resolveExperiment(
+// 带 ?exp=<id> 直接进入该实验；否则先显示实验选择页
+const experiment = ref(resolveExperiment(
   typeof window !== 'undefined' ? window.location.search : ''
+))
+const experimentsForPicker = listExperiments()
+const picking = ref(
+  typeof window !== 'undefined'
+    ? !new URLSearchParams(window.location.search).get('exp')
+    : false
 )
 
 /* ================= 账号 ================= */
@@ -231,10 +245,10 @@ const sceneRef = ref(null)
 const engine = shallowRef(null)
 const library = LIBRARY
 
-const flowSteps = experiment.steps
+const flowSteps = computed(() => experiment.value.steps)
 const flowStep = ref(0)
 
-const score = ref(experiment.scoring.base)
+const score = ref(experiment.value.scoring.base)
 const errors = ref(0)
 const startTime = ref(Date.now())
 const now = ref(Date.now())
@@ -250,11 +264,16 @@ const netlistText = ref('')
 const records = ref([])
 
 /* ---------------- 离线持久化（APP / 无后端时也能留住数据） ---------------- */
-const RECORDS_KEY = 'esim-records-v1'
+// 按实验分 key 存储：切换实验不会把另一个实验的数据混进来
+const RECORDS_KEY_PREFIX = 'esim-records-v1'
+function recordsKey() {
+  return `${RECORDS_KEY_PREFIX}:${experiment.value.id}`
+}
 
 function loadLocalRecords() {
+  records.value = []
   try {
-    const raw = localStorage.getItem(RECORDS_KEY)
+    const raw = localStorage.getItem(recordsKey())
     if (!raw) return
     const arr = JSON.parse(raw)
     if (Array.isArray(arr)) records.value = arr
@@ -267,7 +286,7 @@ watch(
   records,
   (v) => {
     try {
-      localStorage.setItem(RECORDS_KEY, JSON.stringify(v))
+      localStorage.setItem(recordsKey(), JSON.stringify(v))
     } catch {
       /* 存储不可用（隐私模式）时忽略 */
     }
@@ -283,7 +302,7 @@ const stateTick = ref(0)
 
 const sourceVoltage = computed(() => {
   void stateTick.value
-  const vs = engine.value?.components.find((c) => c.def.type === experiment.roles.source)
+  const vs = engine.value?.components.find((c) => c.def.type === experiment.value.roles.source)
   return vs ? vs.state.value : 0
 })
 
@@ -291,8 +310,8 @@ const sourceVoltage = computed(() => {
 const theoryPanel = computed(() => {
   void stateTick.value
   const params = readExperimentParams()
-  const rows = experiment.theory.rows({ U0: params.U0, R1: params.R1, R2: params.R2 })
-  return { title: experiment.theory.title, rows, note: experiment.theory.note }
+  const rows = experiment.value.theory.rows({ U0: params.U0, R1: params.R1, R2: params.R2 })
+  return { title: experiment.value.theory.title, rows, note: experiment.value.theory.note }
 })
 
 /* ================= 计时 ================= */
@@ -417,15 +436,54 @@ function onUndoKey(e) {
 function onSceneReady(e) {
   engine.value = e
   pushLog('3D 场景已就绪：面包板 30 列 × 10 行，插孔拓扑已生成', 'ok')
-  // 预置元件由实验配置决定（src/experiments/*.js）
-  for (const item of experiment.scene.components) {
-    addComponent(item.defKey, item.pos)
+  // 还在选实验时先不铺元件，等用户点了再装载
+  if (picking.value) return
+  applyExperiment(experiment.value, { log: false })
+}
+
+/**
+ * 把一份实验配置装载进场景：清空 → 按配置摆预置元件 → 重置流程/计分/记录。
+ * 切换实验与首次进入都走这里，保证状态复位逻辑只有一处。
+ */
+function applyExperiment(spec, { log = true } = {}) {
+  if (!engine.value) return
+  engine.value.clearAll()
+  for (const item of spec.scene.components) {
+    addComponent(item.defKey, item.pos, { quiet: true })
   }
-  resetHistory() // 预置元件不算历史，撤销不会把初始元件撤没
+
+  errors.value = 0
+  score.value = spec.scoring.base
+  solved.value = false
+  circuitOk.value = false
+  shorts.value = []
+  voltR2.value = 0
+  currentI.value = 0
+  netlistText.value = ''
+  wiring.value = null
+  selectedComp.value = null
+  selectedWire.value = null
+  logs.value = []
+  flowStep.value = 0
+  startTime.value = Date.now()
+  stateTick.value++
+
+  loadLocalRecords() // 按新实验的 key 取回本地记录
+  resetHistory()     // 预置元件不算历史，撤销不会把初始元件撤没
+
+  if (log) pushLog(`[实验] 载入「${spec.title}」`, 'ok')
   showPreview()
 }
 
-function addComponent(key, posOverride) {
+/** 实验选择页点击回调 */
+function startExperiment(id) {
+  const spec = getExperiment(id)
+  experiment.value = spec
+  picking.value = false
+  applyExperiment(spec)
+}
+
+function addComponent(key, posOverride, { quiet = false } = {}) {
   if (!engine.value) return
   // 手动添加时的默认摆放位置（预置元件会自带位置，走 posOverride）
   const positions = {
@@ -440,6 +498,8 @@ function addComponent(key, posOverride) {
   const comp = engine.value.addComponent(key, new (engine.value.camera.position.constructor)(p.x, p.y, p.z))
   selectedComp.value = comp
   stateTick.value++
+  // 预置元件是装载实验的一部分：不弹提示、不单独记历史（随后 resetHistory 统一处理）
+  if (quiet) return
   recordChange()
   showToast(`已添加 ${comp.def.name}，拖动到面包板孔位上方松手自动吸附`, 'ok')
 }
@@ -605,7 +665,7 @@ async function runAnalysis(silent = false) {
     shorts.value.forEach((s) => pushLog(`[短路] ${s.message}`, 'err'))
     if (!silent) {
       errors.value += 1
-      score.value = Math.max(0, score.value - experiment.scoring.errorPenalty)
+      score.value = Math.max(0, score.value - experiment.value.scoring.errorPenalty)
       showToast('⚠ 检测到短路！请检查电源正负极接线', 'err')
     }
   }
@@ -653,10 +713,10 @@ async function runAnalysis(silent = false) {
     components: state.components,
     nodeOf: topo.nodeOf,
     // 判分标准全部来自实验配置，换实验只需换 spec
-    target: experiment.grading.referenceCircuits,
-    requiredTypes: experiment.grading.requiredTypes,
-    typeNames: experiment.grading.typeNames,
-    messages: experiment.grading.messages,
+    target: experiment.value.grading.referenceCircuits,
+    requiredTypes: experiment.value.grading.requiredTypes,
+    typeNames: experiment.value.grading.typeNames,
+    messages: experiment.value.grading.messages,
   })
   wiring.value = wiringResult
   circuitOk.value = wiringResult.ok
@@ -762,9 +822,9 @@ const SOURCE_TOLERANCE_V = 0.2
 function readExperimentParams() {
   const comps = engine.value?.components || []
   const byType = (t) => comps.find((c) => c.def.type === t)
-  const src = byType(experiment.roles.source)
-  const seriesR = byType(experiment.roles.fixedResistor)
-  const variableR = byType(experiment.roles.variableResistor)
+  const src = byType(experiment.value.roles.source)
+  const seriesR = byType(experiment.value.roles.fixedResistor)
+  const variableR = byType(experiment.value.roles.variableResistor)
   return {
     U0: src ? src.state.value : 0,
     R1: seriesR ? seriesR.state.value : 0,
@@ -793,18 +853,18 @@ function recordData() {
   const params = readExperimentParams()
   const r2c = params.variableR
   if (!r2c) {
-    const roleName = experiment.roles.variableResistor
+    const roleName = experiment.value.roles.variableResistor
     showToast(`未找到实验所需的可变电阻（${roleName}）`, 'err')
     return
   }
   const r2v = r2c.state.value
-  const dedupeKey = experiment.dataPoints.dedupeOn
+  const dedupeKey = experiment.value.dataPoints.dedupeOn
   if (records.value.some((r) => r[dedupeKey] === r2v)) {
     showToast('当前 R2 阻值已记录，请调节电位器后再记录', 'err')
     return
   }
-  const uTheory = experiment.formulas.uTheory({ ...params, R2: r2v })
-  const iTheory = experiment.formulas.iTheory({ ...params, R2: r2v })
+  const uTheory = experiment.value.formulas.uTheory({ ...params, R2: r2v })
+  const iTheory = experiment.value.formulas.iTheory({ ...params, R2: r2v })
   const rec = {
     n: records.value.length + 1,
     r2: r2v,
@@ -822,7 +882,7 @@ function recordData() {
   }
   pushLog(`[记录] 第 ${records.value.length} 组：R2=${r2v}Ω, U=${voltR2.value.toFixed(2)}V, I=${(currentI.value * 1000).toFixed(2)}mA`, 'ok')
   showToast(`已记录第 ${records.value.length} 组数据`, 'ok')
-  if (records.value.length >= experiment.dataPoints.requiredGroups) {
+  if (records.value.length >= experiment.value.dataPoints.requiredGroups) {
     flowStep.value = 4
     showToast('数据记录完成，可以提交实验报告了', 'ok')
   }
@@ -834,8 +894,8 @@ function useHint() {
     showToast('请先完成实验预习、任务与电路图环节', 'err')
     return
   }
-  score.value = Math.max(0, score.value - experiment.scoring.hintPenalty)
-  pushLog(`[提示] 使用提示 -${experiment.scoring.hintPenalty} 分`, 'warn')
+  score.value = Math.max(0, score.value - experiment.value.scoring.hintPenalty)
+  pushLog(`[提示] 使用提示 -${experiment.value.scoring.hintPenalty} 分`, 'warn')
 
   // 先用图同构判定的结论给提示（比"猜哪根线没连"更准）
   if (wiring.value && !wiring.value.ok) {
@@ -889,7 +949,7 @@ function onModalConfirm() {
 }
 
 function showPreview() {
-  const c = experiment.content.preview
+  const c = experiment.value.content.preview
   openModal({
     title: c.title,
     subtitle: c.subtitle,
@@ -904,7 +964,7 @@ function showPreview() {
 }
 
 function showTask() {
-  const c = experiment.content.task
+  const c = experiment.value.content.task
   openModal({
     title: c.title,
     subtitle: c.subtitle,
@@ -919,7 +979,7 @@ function showTask() {
 }
 
 function showSchematic() {
-  const c = experiment.content.schematic
+  const c = experiment.value.content.schematic
   openModal({
     title: c.title,
     subtitle: c.subtitle,
@@ -1001,7 +1061,7 @@ function submitReport() {
 function resetAll() {
   reportVisible.value = false
   engine.value?.clearAll()
-  score.value = experiment.scoring.base
+  score.value = experiment.value.scoring.base
   errors.value = 0
   records.value = []
   startTime.value = Date.now()

@@ -13,6 +13,7 @@ export const SPEC = {
   id: 'parallel-current-divider',
   title: '并联电路分流规律',
   subject: '直流电路',
+  summary: '把 R1、R2 并接在电源两端，验证各支路电压相等，并观察 R2 变化如何影响支路电流。',
 
   steps: ['实验预习', '任务', '电路图', '记录数据', '评分'],
 

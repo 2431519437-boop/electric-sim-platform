@@ -36,5 +36,11 @@ export function resolveExperiment(search = '') {
 
 /** 给实验选择页用的精简列表 */
 export function listExperiments() {
-  return EXPERIMENTS.map(({ id, title, subject }) => ({ id, title, subject }))
+  return EXPERIMENTS.map(({ id, title, subject, summary, steps }) => ({
+    id,
+    title,
+    subject,
+    summary: summary || '',
+    stepCount: Array.isArray(steps) ? steps.length : 0,
+  }))
 }
