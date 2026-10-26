@@ -24,8 +24,14 @@ import {
 } from '../circuit/pinResolver.js'
 
 const WIRE_COLORS = [0xdc2626, 0x1f2937, 0x2563eb, 0x16a34a, 0xeab308, 0xf8fafc]
-/** 导线拾取半径（世界坐标单位）：比管径 0.012 大得多，方便手指点中 */
-const WIRE_PICK_RADIUS = 0.07
+/** 导线拾取阈值：NDC（屏幕空间）距离，与分辨率/缩放无关；0.07 ≈ 视口宽度的 3.5% */
+const WIRE_PICK_NDC = 0.07
+/**
+ * 连线模式下孔位的最大吸附距离（世界坐标）。
+ * 孔位间距约 0.14，0.25 约等于 1.8 个孔距：既能容忍手指误差，
+ * 又不会让"点板外空白"也吸到最近的孔。
+ */
+const HOLE_PICK_MAX = 0.25
 const WIRE_RADIUS = 0.012
 const WIRE_RADIUS_SELECTED = 0.026
 
@@ -649,25 +655,24 @@ export class SceneEngine {
 
   /**
    * 拾取导线。
-   * 导线是半径 0.012 的细管，直接对网格做射线检测在手机屏上几乎点不中，
-   * 所以改用「射线到导线采样点的距离」判定，拾取半径独立于管子粗细。
+   * 用「屏幕空间（NDC）距离」而不是世界坐标距离：摄像机远近、窗口大小都不影响手感，
+   * 手机上点一下也能命中。阈值与引脚拾取同一量级。
    */
   _pickWire() {
     if (!this.wires.length) return null
-    this.raycaster.setFromCamera(this.pointer, this.camera)
-    const ray = this.raycaster.ray
+    const v = new THREE.Vector3()
     let best = null
-    let bestAlong = Infinity
+    let bestD = WIRE_PICK_NDC
     for (const w of this.wires) {
       const pts = w.pickPoints
       if (!pts || !pts.length) continue
       for (const p of pts) {
-        if (ray.distanceToPoint(p) <= WIRE_PICK_RADIUS) {
-          const along = ray.origin.distanceTo(p)
-          if (along < bestAlong) {
-            bestAlong = along
-            best = w
-          }
+        v.copy(p).project(this.camera)
+        if (v.z > 1) continue
+        const d = Math.hypot(v.x - this.pointer.x, v.y - this.pointer.y)
+        if (d < bestD) {
+          bestD = d
+          best = w
         }
       }
     }
@@ -732,6 +737,17 @@ export class SceneEngine {
       return
     }
 
+    // 删除模式：点到导线直接删，不需要先选中（手机上少一次点击）
+    if (this.mode === 'erase') {
+      const wire = this._pickWire()
+      if (wire) {
+        this.hooks.onWireErase?.(wire)
+      } else {
+        this.hooks.onLog?.('[删除] 这里没有导线，请点在导线上')
+      }
+      return
+    }
+
     // 拖拽模式：拾取元件
     const comp = this._pickComponent()
     if (comp) {
@@ -781,6 +797,13 @@ export class SceneEngine {
         this.refreshWiresOf(this.dragging.id)
         this._showNearestHole(this.dragging)
       }
+      return
+    }
+
+    // 删除模式：光标提示这一下会不会删到导线
+    if (this.mode === 'erase') {
+      const w = this._pickWire()
+      this.renderer.domElement.style.cursor = w ? 'pointer' : 'not-allowed'
       return
     }
 
@@ -855,17 +878,32 @@ export class SceneEngine {
   setMode(mode) {
     this.mode = mode
     this.wireDraft = null
-    // 切到导线模式时清掉导线选中态：这时鼠标点击是"画线"而不是"选中"
-    if (mode === 'wire') this.selectWire(null)
+    // 只有拖拽模式需要"选中导线"；连线/删除模式下点击语义不同，先清掉选中态
+    if (mode !== 'drag') this.selectWire(null)
     if (this.holeMarker) this.holeMarker.visible = false
-    this.hooks.onLog?.(`[模式] 切换到${mode === 'wire' ? '导线' : '拖拽'}模式`)
+    const label = mode === 'wire' ? '连线' : mode === 'erase' ? '删除' : '拖拽'
+    this.hooks.onLog?.(`[模式] 切换到${label}模式`)
     this.hooks.onModeChange?.(mode)
+  }
+
+  /** 擦除模式：删除指定导线并返回它，供外层记录历史 */
+  eraseWire(wire) {
+    if (!wire) return null
+    this.removeWire(wire)
+    return wire
   }
 
   _handleWireClick() {
     const ep = this._pickEndpoint()
     if (!ep) {
-      this.hooks.onLog?.('[导线] 未拾取到引脚或孔位')
+      // 点到空白处：取消已选的起点，避免一直挂着"半截连线"
+      if (this.wireDraft) {
+        this.wireDraft = null
+        this.hooks.onWireDraft?.(null)
+        this.hooks.onLog?.('[导线] 已取消当前连线')
+      } else {
+        this.hooks.onLog?.('[导线] 未拾取到引脚或孔位')
+      }
       return
     }
     if (!this.wireDraft) {
@@ -908,10 +946,11 @@ export class SceneEngine {
     }
     if (bestPin) return bestPin
 
-    // 2) 孔位
+    // 2) 孔位：限制最大距离，避免"点在板外很远也吸到最近的孔"
+    //    这样点空白处才能真正被判定为"没拾取到端点"，从而取消当前连线
     const gp = this._groundPoint()
     if (gp) {
-      const h = nearestHole(gp, this.holes, this.boardWorld)
+      const h = nearestHole(gp, this.holes, this.boardWorld, HOLE_PICK_MAX)
       if (h) return { kind: 'hole', holeId: h.id, label: h.label, boardId: h.boardId }
     }
     return null

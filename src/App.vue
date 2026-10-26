@@ -63,6 +63,7 @@
           @wire-created="onWireCreated"
           @wire-select="onWireSelect"
           @wire-remove="onWireRemove"
+          @wire-erase="onWireErase"
           @state-change="onStateChange"
           @log="pushLog"
         />
@@ -574,6 +575,20 @@ function onWireRemove() {
   showToast(`已删除导线 ${w.id}，可点「撤销」或 Ctrl+Z 恢复`, 'ok')
   recordChange()
   // 拓扑变了，已算过的结果要重算
+  if (solved.value) runAnalysis(true)
+}
+
+/** 删除模式：点一下导线直接删除（不需要先选中） */
+function onWireErase(wire) {
+  const eng = engine.value
+  if (!eng || !wire) return
+  const label = `${eng.describeEndpoint(wire.from)} → ${eng.describeEndpoint(wire.to)}`
+  const id = wire.id
+  if (!eng.eraseWire(wire)) return
+  selectedWire.value = null
+  pushLog(`[删除导线] ${id}  ${label}`, 'ok')
+  showToast(`已删除导线 ${id}，可点「撤销」恢复`, 'ok')
+  recordChange()
   if (solved.value) runAnalysis(true)
 }
 

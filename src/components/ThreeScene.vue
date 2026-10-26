@@ -4,19 +4,43 @@
 
     <!-- 左上角工具条 -->
     <div class="toolbar">
-      <button class="mode-btn" :class="{ on: mode === 'wire' }" @click="toggleMode">
-        <span class="ico">{{ mode === 'wire' ? '🔌' : '🖐' }}</span>
-        {{ mode === 'wire' ? '导线模式' : '拖拽模式' }}
-        <em>W</em>
-      </button>
+      <div class="modes">
+        <button
+          class="mode-btn"
+          :class="{ on: mode === 'drag' }"
+          title="拖动元件、点选导线"
+          @click="setMode('drag')"
+        >
+          <span class="ico">🖐</span>拖拽
+        </button>
+        <button
+          class="mode-btn"
+          :class="{ on: mode === 'wire' }"
+          title="依次点两个引脚/孔位连线"
+          @click="setMode('wire')"
+        >
+          <span class="ico">🔌</span>连线<em>W</em>
+        </button>
+        <button
+          class="mode-btn danger"
+          :class="{ on: mode === 'erase' }"
+          title="点导线直接删除"
+          @click="setMode('erase')"
+        >
+          <span class="ico">🗑</span>删除<em>E</em>
+        </button>
+      </div>
       <button class="home-btn" title="回到全景视角" @click="resetView">⌂ 全景</button>
-      <span class="ver">v2 视角锁定 · 双击画布复位</span>
+      <span class="ver">v3 三模式 · 双击画布复位</span>
       <div class="hint">
         <template v-if="mode === 'wire'">
-          依次点击 <b>两个引脚 / 孔位</b> 完成连线，拖动元件时导线自动拉伸
+          依次点击 <b>两个引脚 / 孔位</b> 完成连线；点空白处可取消当前连线
+        </template>
+        <template v-else-if="mode === 'erase'">
+          直接点击要删除的 <b>导线</b>，一下即删；误删可点顶部「撤销」或 Ctrl+Z
         </template>
         <template v-else>
-          移动鼠标：右手跟着走 · 左键按住元件：抓住并拖动 · 右键拖动 / 滚轮：旋转元件
+          左键按住元件拖动 · 点击导线可选中后删除 · 右键拖动/滚轮旋转元件
         </template>
       </div>
     </div>
@@ -54,6 +78,7 @@ const emit = defineEmits([
   'wire-created',
   'wire-select',
   'wire-remove',
+  'wire-erase',
   'state-change',
   'log',
 ])
@@ -85,6 +110,11 @@ function toggleMode() {
   engine.setMode(engine.mode === 'wire' ? 'drag' : 'wire')
 }
 
+/** 三模式显式切换（工具条按钮用） */
+function setMode(m) {
+  engine?.setMode(m)
+}
+
 function resetView() {
   engine?.resetView()
 }
@@ -94,7 +124,17 @@ function onKey(e) {
   if (tag === 'input' || tag === 'textarea' || tag === 'select') return
   if (e.key === 'w' || e.key === 'W') {
     e.preventDefault()
-    toggleMode()
+    setMode(mode.value === 'wire' ? 'drag' : 'wire')
+    return
+  }
+  if (e.key === 'e' || e.key === 'E') {
+    e.preventDefault()
+    setMode(mode.value === 'erase' ? 'drag' : 'erase')
+    return
+  }
+  if (e.key === 'Escape' && mode.value !== 'drag') {
+    e.preventDefault()
+    setMode('drag')
     return
   }
   // 选中导线后，Delete / Backspace 直接删除（键盘端更顺手）
@@ -125,6 +165,10 @@ onMounted(() => {
     onWireSelect: (wire) => {
       selectedWire.value = wire || null
       emit('wire-select', wire || null)
+    },
+    onWireErase: (wire) => {
+      // 删除模式下由外层完成删除（记录历史、重算），引擎不直接动手
+      emit('wire-erase', wire)
     },
     onModeChange: (m) => {
       mode.value = m
@@ -182,35 +226,53 @@ defineExpose({ engine: () => engine, toggleMode })
   z-index: 5;
 }
 
+/* 三个模式按钮排成一组，当前模式一眼可见 */
+.modes {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(9, 22, 39, 0.72);
+  border: 1px solid rgba(125, 211, 252, 0.16);
+  backdrop-filter: blur(6px);
+}
+
 .mode-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
+  gap: 6px;
+  padding: 8px 12px;
   border-radius: 9px;
   font-size: 13px;
   font-weight: 700;
-  color: #dbeafe;
-  background: rgba(13, 30, 54, 0.86);
-  border: 1px solid rgba(125, 211, 252, 0.28);
-  backdrop-filter: blur(6px);
-  transition: all 0.18s;
+  color: #9dc0e6;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.16s;
 }
 .mode-btn:hover {
-  background: rgba(23, 48, 82, 0.95);
+  color: #eaf3ff;
+  background: rgba(56, 189, 248, 0.14);
 }
+/* 选中态：连线=蓝，删除=红，拖拽=绿，颜色即语义 */
 .mode-btn.on {
+  color: #06212f;
+  background: #38bdf8;
+  border-color: transparent;
+  box-shadow: 0 4px 16px rgba(56, 189, 248, 0.4);
+}
+.mode-btn.danger.on {
   color: #fff;
-  background: linear-gradient(135deg, #b91c1c, #dc2626);
-  border-color: rgba(252, 165, 165, 0.6);
-  box-shadow: 0 6px 20px rgba(220, 38, 38, 0.35);
+  background: linear-gradient(135deg, #dc2626, #ef4444);
+  box-shadow: 0 4px 16px rgba(220, 38, 38, 0.45);
 }
 .mode-btn em {
   font-style: normal;
-  font-size: 10.5px;
-  padding: 1px 5px;
+  font-size: 10px;
+  padding: 1px 4px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.18);
 }
 
 .home-btn {
