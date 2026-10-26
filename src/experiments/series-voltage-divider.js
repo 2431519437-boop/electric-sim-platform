@@ -29,11 +29,11 @@ export const SPEC = {
     ],
   },
 
-  /* 语义角色：把「电源 / 串联电阻 / 可变电阻」和具体元件类型解耦，
+  /* 语义角色：把「电源 / 固定电阻 / 可变电阻」和具体元件类型解耦，
      代码里不再直接写 'RHEO' 这种类型名 */
   roles: {
     source: 'VSRC',
-    seriesResistor: 'RES',
+    fixedResistor: 'RES',
     variableResistor: 'RHEO',
   },
 
@@ -140,10 +140,41 @@ export const SPEC = {
     },
   },
 
-  /* 判分：标准电路（图同构用）。暂沿用 graphMatch.js 里已有的两份等价答案，
-     后续可把 referenceCircuits 直接搬到这里，由 graphMatch 按配置匹配 */
+  /* 判分：标准电路（图同构用）+ 必需元件 + 提示文案。
+     换实验时主要就改这一块 —— 标准答案图必须人工构造并验证。 */
   grading: {
-    targetVariants: 'series-default',
+    requiredTypes: ['RES', 'RHEO'],
+    typeNames: { RES: '固定电阻 R1', RHEO: '电位器 R2' },
+    messages: {
+      okMain: '接线与标准串联回路完全等价（图同构匹配成功）',
+      okSwapped: '接线正确：R1 与 R2 的串联顺序与图纸相反，但电气完全等效',
+      parallelInsteadOfSeries: 'R1、R2 与电源并联在同一对节点上，没有构成串联回路',
+      structureMismatch: '接线结构不符合标准串联回路（元件连接顺序或并接方式有误）',
+      resValueWrong: (cur, ref) => `R1 阻值应为 ${ref}Ω，当前为 ${cur}Ω`,
+    },
+    referenceCircuits: [
+      {
+        name: '串联分压：电源 → R1(200Ω) → R2(电位器) → 回到电源',
+        vertices: [{ id: 'V1' }, { id: 'V2' }, { id: 'V3' }],
+        edges: [
+          // 电源边方向 = V+ → V−：V2 接 R1 一侧为 V+，V1 接 R2 一侧为 V−
+          { a: 'V2', b: 'V1', type: 'VSRC', directed: true },
+          { a: 'V2', b: 'V3', type: 'RES', value: 200, tol: 0.2 },
+          { a: 'V3', b: 'V1', type: 'RHEO' },
+        ],
+      },
+      {
+        // R2 在前、R1 在后：串联里两电阻互换，测得的 U(R2)、I 完全一样，
+        // 拓扑上必须判为等价 —— 这正是图同构比"逐根导线比对"高明的地方
+        name: '串联分压（R2 在前）：电源 → R2 → R1 → 回到电源',
+        vertices: [{ id: 'V1' }, { id: 'V2' }, { id: 'V3' }],
+        edges: [
+          { a: 'V2', b: 'V1', type: 'VSRC', directed: true },
+          { a: 'V2', b: 'V3', type: 'RHEO' },
+          { a: 'V3', b: 'V1', type: 'RES', value: 200, tol: 0.2 },
+        ],
+      },
+    ],
   },
 }
 

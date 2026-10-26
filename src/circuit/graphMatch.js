@@ -61,6 +61,26 @@ export const TYPE_NAME = {
   SWITCH: '开关',
 }
 
+/**
+ * 判分提示文案的默认值。
+ * 实验配置可以通过 grading.messages 覆盖任意一条，从而在不改代码的情况下
+ * 让提示语贴合具体实验（比如把"标准串联回路"改成"标准并联回路"）。
+ */
+export const DEFAULT_MESSAGES = {
+  noSource: '未检测到电源，请先放置恒压源',
+  okMain: '接线与标准串联回路完全等价（图同构匹配成功）',
+  okSwapped: '接线正确：R1 与 R2 的串联顺序与图纸相反，但电气完全等效',
+  polarity: '接线拓扑正确，但电源极性接反（V+ 与 V- 对调）',
+  parallelInsteadOfSeries: 'R1、R2 与电源并联在同一对节点上，没有构成串联回路',
+  extraPrefix: '回路中多接了元件',
+  extraSuffix: '（应只有电源、R1、R2）',
+  missingEdges: (n) => `回路未闭合：还缺 ${n} 处连接`,
+  hanging: (nodes) => `回路未闭合：节点 ${nodes.join('、')} 处有引脚悬空（少接一根线）`,
+  resValueWrong: (cur, ref) => `R1 阻值应为 ${ref}Ω，当前为 ${cur}Ω`,
+  paramWrong: '元件参数不符合实验要求',
+  structureMismatch: '接线结构不符合标准串联回路（元件连接顺序或并接方式有误）',
+}
+
 /* ================================================================
    2. 电路 → 带标签多重图
 ================================================================ */
@@ -276,9 +296,21 @@ export function matchGraphs(ref, g, opts = {}) {
  *   liveEdgeCount: number
  * }}
  */
-export function evaluateWiring({ components, nodeOf, target = TARGET_VARIANTS }) {
+export function evaluateWiring({
+  components,
+  nodeOf,
+  target = TARGET_VARIANTS,
+  // 回路中必须具备的元件类型（由实验配置提供）
+  requiredTypes = ['RES', 'RHEO'],
+  // 类型 → 中文名，用于提示文案
+  typeNames = TYPE_NAME,
+  // 提示文案覆盖
+  messages = {},
+}) {
   const variants = Array.isArray(target) ? target : [target]
   const main = variants[0]
+  const msg = { ...DEFAULT_MESSAGES, ...messages }
+  const nameOf = (t) => typeNames[t] || TYPE_NAME[t] || t
   const graph = buildCircuitGraph({ components, nodeOf })
   const fail = (message, extra = {}) => ({
     ok: false,
@@ -292,27 +324,22 @@ export function evaluateWiring({ components, nodeOf, target = TARGET_VARIANTS })
   })
 
   const sources = graph.edges.filter((e) => e.type === 'VSRC')
-  if (!sources.length) return fail('未检测到电源，请先放置恒压源')
+  if (!sources.length) return fail(msg.noSource)
 
   // 从电源出发，取它在电气上真正连到的部分
   const live = connectedComponent(graph, sources[0].a)
   const liveEdges = live.edges
   const has = (t) => liveEdges.some((e) => e.type === t)
 
-  if (!has('RES')) {
+  // 必需元件检查（由配置声明需要哪些类型，提示语按类型名生成）
+  for (const t of requiredTypes) {
+    if (has(t)) continue
+    const label = nameOf(t)
     return fail(
-      graph.edges.some((e) => e.type === 'RES')
-        ? '固定电阻 R1 引脚未真正接入回路（可能存在悬空端）'
-        : '回路中缺少固定电阻 R1',
-      { missing: ['RES'], liveEdgeCount: liveEdges.length }
-    )
-  }
-  if (!has('RHEO')) {
-    return fail(
-      graph.edges.some((e) => e.type === 'RHEO')
-        ? '电位器 R2 引脚未真正接入回路（可能存在悬空端）'
-        : '回路中缺少电位器 R2',
-      { missing: ['RHEO'], liveEdgeCount: liveEdges.length }
+      graph.edges.some((e) => e.type === t)
+        ? `${label} 引脚未真正接入回路（可能存在悬空端）`
+        : `回路中缺少${label}`,
+      { missing: [t], liveEdgeCount: liveEdges.length }
     )
   }
 
@@ -336,10 +363,7 @@ export function evaluateWiring({ components, nodeOf, target = TARGET_VARIANTS })
     return {
       ok: true,
       polarityReversed: false,
-      message:
-        matchedIdx === 0
-          ? '接线与标准串联回路完全等价（图同构匹配成功）'
-          : '接线正确：R1 与 R2 的串联顺序与图纸相反，但电气完全等效',
+      message: matchedIdx === 0 ? msg.okMain : msg.okSwapped,
       missing: [],
       extra: extraComponents,
       mapping: matched,
@@ -357,7 +381,7 @@ export function evaluateWiring({ components, nodeOf, target = TARGET_VARIANTS })
     return {
       ok: false,
       polarityReversed: true,
-      message: '接线拓扑正确，但电源极性接反（V+ 与 V- 对调）',
+      message: msg.polarity,
       missing: [],
       extra: extraComponents,
       mapping: relaxed,
@@ -374,13 +398,16 @@ export function evaluateWiring({ components, nodeOf, target = TARGET_VARIANTS })
   let message
   let missing = []
 
+  // 标准答案里串联电阻的期望值，用于"阻值不对"的提示（不再写死 200 / 40）
+  const refRes = main.edges.find((e) => e.type === 'RES')
+
   if (live.vertices.length < main.vertices.length) {
     // 元件两端都落在同一对节点上 → 并联而非串联
-    message = 'R1、R2 与电源并联在同一对节点上，没有构成串联回路'
+    message = msg.parallelInsteadOfSeries
   } else if (extras.length) {
-    message = `回路中多接了元件：${[...new Set(extras)].join('、')}（应只有电源、R1、R2）`
+    message = `${msg.extraPrefix}：${[...new Set(extras)].join('、')}${msg.extraSuffix}`
   } else if (liveEdges.length < main.edges.length) {
-    message = `回路未闭合：还缺 ${main.edges.length - liveEdges.length} 处连接`
+    message = msg.missingEdges(main.edges.length - liveEdges.length)
   } else {
     // 是否存在悬空端点（度数 < 2，说明有一端没接）
     const deg = new Map()
@@ -392,14 +419,20 @@ export function evaluateWiring({ components, nodeOf, target = TARGET_VARIANTS })
     const valueOnly = variants.some((v) => matchGraphs(v, sub, { directed: false, ignoreValue: true }))
 
     if (hanging.length) {
-      message = `回路未闭合：节点 ${hanging.join('、')} 处有引脚悬空（少接一根线）`
+      message = msg.hanging(hanging)
     } else if (valueOnly) {
-      missing = liveEdges
-        .filter((e) => e.type === 'RES' && Math.abs(Number(e.value) - 200) > 40)
-        .map((e) => `R1 阻值应为 200Ω，当前为 ${Number(e.value)}Ω`)
-      message = missing.length ? missing[0] : '元件参数不符合实验要求'
+      const refVal = Number(refRes?.value ?? 0)
+      const refTol = Number(refRes?.tol ?? 0.2)
+      // 阈值 = 标准阻值 × 容差（200Ω × 0.2 = 40Ω），与原实现保持一致
+      const limit = refVal * refTol
+      missing = refVal
+        ? liveEdges
+            .filter((e) => e.type === 'RES' && Math.abs(Number(e.value) - refVal) > limit)
+            .map((e) => msg.resValueWrong(Number(e.value), refVal))
+        : []
+      message = missing.length ? missing[0] : msg.paramWrong
     } else {
-      message = '接线结构不符合标准串联回路（元件连接顺序或并接方式有误）'
+      message = msg.structureMismatch
     }
   }
 

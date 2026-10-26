@@ -153,11 +153,13 @@ import {
   authApi,
   getApiBase,
 } from './api/client.js'
-import { getExperiment, DEFAULT_EXPERIMENT_ID } from './experiments/index.js'
+import { resolveExperiment } from './experiments/index.js'
 
 /* ================= 当前实验配置 ================= */
-// 现在只有一份；阶段二会从 /api/experiments 拉取并由学生选择
-const experiment = getExperiment(DEFAULT_EXPERIMENT_ID)
+// 过渡期用 ?exp=<id> 切换；阶段二接入实验选择页后改为读路由/本地存储
+const experiment = resolveExperiment(
+  typeof window !== 'undefined' ? window.location.search : ''
+)
 
 /* ================= 账号 ================= */
 const user = ref(null)
@@ -650,6 +652,11 @@ async function runAnalysis(silent = false) {
   const wiringResult = evaluateWiring({
     components: state.components,
     nodeOf: topo.nodeOf,
+    // 判分标准全部来自实验配置，换实验只需换 spec
+    target: experiment.grading.referenceCircuits,
+    requiredTypes: experiment.grading.requiredTypes,
+    typeNames: experiment.grading.typeNames,
+    messages: experiment.grading.messages,
   })
   wiring.value = wiringResult
   circuitOk.value = wiringResult.ok
@@ -756,7 +763,7 @@ function readExperimentParams() {
   const comps = engine.value?.components || []
   const byType = (t) => comps.find((c) => c.def.type === t)
   const src = byType(experiment.roles.source)
-  const seriesR = byType(experiment.roles.seriesResistor)
+  const seriesR = byType(experiment.roles.fixedResistor)
   const variableR = byType(experiment.roles.variableResistor)
   return {
     U0: src ? src.state.value : 0,
