@@ -16,7 +16,8 @@
     "check:core": "node scripts/check-core.mjs",
     "check:components": "node scripts/check-components.mjs",
     "check:graph": "node scripts/check-graphmatch.mjs",
-    "check": "node scripts/check-core.mjs && node scripts/check-components.mjs && node scripts/check-graphmatch.mjs"
+    "test:grading": "node scripts/tests/grading.test.mjs",
+    "check": "node scripts/check-core.mjs && node scripts/check-components.mjs && node scripts/check-graphmatch.mjs && node scripts/tests/grading.test.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^7.6.9",

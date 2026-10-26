@@ -5,9 +5,9 @@
  * 因此结果完全确定，可重复。
  */
 
-import { evaluateWiring } from '../src/circuit/graphMatch.js'
-import { SPEC as series } from '../src/experiments/series-voltage-divider.js'
-import { SPEC as parallel } from '../src/experiments/parallel-current-divider.js'
+import { evaluateWiring } from '../../src/circuit/graphMatch.js'
+import { SPEC as series } from '../../src/experiments/series-voltage-divider.js'
+import { SPEC as parallel } from '../../src/experiments/parallel-current-divider.js'
 
 const PIN = (id, name) => `pin:${id}:${name}`
 
