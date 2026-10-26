@@ -1,0 +1,18 @@
+# 构建镜像时不要把这些传进 Docker 上下文（否则上传几个 G，构建极慢）
+node_modules
+**/node_modules
+android
+.cache
+dist
+.git
+.github
+.vscode
+server/data
+server/data/*
+npm-debug.log*
+*.apk
+发布
+miniprogram
+scripts
+*.md
+!README.md

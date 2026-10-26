@@ -1,0 +1,33 @@
+{
+  "name": "electric-sim-platform",
+  "private": true,
+  "version": "1.0.0",
+  "description": "3D 电工电子虚拟仿真实训平台（Vue 3 + Vite + Three.js）",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173",
+    "server": "node server/index.js",
+    "start": "npm run build && node server/index.js",
+    "teacher": "node server/create-teacher.mjs",
+    "db:reset": "node server/reset-db.mjs",
+    "db:smoke": "node server/smoke.mjs",
+    "check:core": "node scripts/check-core.mjs",
+    "check:components": "node scripts/check-components.mjs",
+    "check:graph": "node scripts/check-graphmatch.mjs",
+    "check": "node scripts/check-core.mjs && node scripts/check-components.mjs && node scripts/check-graphmatch.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.6.9",
+    "@capacitor/cli": "^7.6.9",
+    "@capacitor/core": "^7.6.9",
+    "js-yaml": "^5.5.0",
+    "three": "^0.160.1",
+    "vue": "^3.4.21"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.0.4",
+    "vite": "^5.2.11"
+  }
+}

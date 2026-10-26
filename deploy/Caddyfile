@@ -1,0 +1,32 @@
+# Caddy 会自动为 {$DOMAIN} 申请并续期 Let's Encrypt 证书
+# 前提：域名 A 记录已指向本服务器公网 IP，且 80/443 端口可从公网访问
+# 国内服务器注意：未备案域名访问 80/443 可能被拦截，见 README「备案」一节
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# 反代到应用容器
+	reverse_proxy app:3001
+
+	# 安全响应头
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options SAMEORIGIN
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	# 静态资源长缓存（Vite 产物带 hash）
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=31536000, immutable"
+
+	# 上传体积限制（电路数据很小，这里给足余量）
+	request_body {
+		max_size 8MB
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

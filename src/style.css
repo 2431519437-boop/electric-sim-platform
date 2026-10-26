@@ -1,0 +1,64 @@
+/* ============================================================
+   全局样式（3D 电工电子虚拟仿真实训平台）
+   ============================================================ */
+:root {
+  --c-bg: #0b1524;
+  --c-panel: #101f33;
+  --c-panel-2: #16283f;
+  --c-line: rgba(125, 211, 252, 0.18);
+  --c-text: #dbeafe;
+  --c-muted: #8fb0d1;
+  --c-accent: #38bdf8;
+  --c-ok: #22c55e;
+  --c-warn: #f59e0b;
+  --c-err: #ef4444;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Microsoft YaHei', 'PingFang SC', 'Helvetica Neue', system-ui, sans-serif;
+  background: var(--c-bg);
+  color: var(--c-text);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font-family: inherit;
+  border: none;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  outline: none;
+}
+
+input,
+select {
+  font-family: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(125, 211, 252, 0.25);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(125, 211, 252, 0.45);
+}

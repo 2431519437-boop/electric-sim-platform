@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">电工电子实训</string>
+    <string name="title_activity_main">电工电子实训</string>
+    <string name="package_name">com.esim.platform</string>
+    <string name="custom_url_scheme">com.esim.platform</string>
+</resources>

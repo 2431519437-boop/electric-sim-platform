@@ -1,0 +1,11 @@
+﻿{
+    "appId":  "com.esim.platform",
+    "webDir":  "dist",
+    "appName":  "电工电子实训",
+    "server":  {
+                   "androidScheme":  "https"
+               },
+    "android":  {
+                    "allowMixedContent":  true
+                }
+}

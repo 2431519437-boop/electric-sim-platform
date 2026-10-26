@@ -1,0 +1,55 @@
+# ============================================================
+# 一键部署：应用 + Caddy（自动申请 HTTPS 证书）
+#
+#   docker compose up -d --build
+#
+# 首次启动前请在 .env 里填好 DOMAIN 和邮箱（或先用域名解析做好）
+# ============================================================
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    container_name: esim-app
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3001
+    volumes:
+      # SQLite 数据持久化（数据库 + WAL 文件）
+      - esim-data:/app/server/data
+    networks:
+      - esim
+    # 不对外暴露 3001，只让 Caddy 访问
+    expose:
+      - "3001"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: esim-caddy
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?请在 .env 里设置 DOMAIN}
+      EMAIL: ${EMAIL:-admin@example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - esim
+
+volumes:
+  esim-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  esim:

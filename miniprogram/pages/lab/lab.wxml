@@ -1,0 +1,81 @@
+<view class="page">
+  <!-- 顶栏 -->
+  <view class="topbar">
+    <view class="brand">⚡ 电工电子实训</view>
+    <view class="sp"></view>
+    <view wx:if="{{user}}" class="chip" bindtap="logout">
+      {{user.displayName}}<text class="role">{{user.role === 'teacher' ? '教师' : '学生'}}</text>
+    </view>
+    <view wx:else class="chip guest">游客</view>
+  </view>
+
+  <!-- 电路 -->
+  <view class="card">
+    <view class="card-title">实验电路（串联分压）</view>
+    <canvas type="2d" id="cv" class="cv"></canvas>
+    <view class="muted">电源 6V → R1 200Ω → R2 可调 → 回到电源</view>
+  </view>
+
+  <!-- 调节 -->
+  <view class="card">
+    <view class="card-title">调节电位器 R2</view>
+    <view class="slider-row">
+      <slider
+        class="slider"
+        min="{{r2Min}}"
+        max="{{r2Max}}"
+        value="{{r2}}"
+        activeColor="#38bdf8"
+        backgroundColor="#1e3a5f"
+        block-size="22"
+        bindchanging="onSlider"
+        bindchange="onSlider"
+      />
+      <view class="val">{{r2}} Ω</view>
+    </view>
+    <view class="theory">
+      理论值：U(R2) = {{uTheory.toFixed(2)}} V ｜ I = {{iTheory.toFixed(2)}} mA
+    </view>
+    <button class="btn primary" bindtap="doAnalyze" loading="{{busy}}">开始计算（后端求解）</button>
+  </view>
+
+  <!-- 结果 -->
+  <view class="card">
+    <view class="card-title">测量结果</view>
+    <view class="row">
+      <text class="k">电压表 U(R2)</text>
+      <text class="v">{{solved ? u.toFixed(2) : '--'}} V</text>
+    </view>
+    <view class="row">
+      <text class="k">电流表 I</text>
+      <text class="v">{{solved ? (i * 1000).toFixed(2) : '--'}} mA</text>
+    </view>
+    <view class="row">
+      <text class="k">接线判定</text>
+      <text class="tag {{circuitOk ? 'ok' : 'err'}}">{{circuitOk ? '回路闭合' : '回路断开'}}</text>
+    </view>
+    <view wx:if="{{wiringMsg}}" class="muted" style="margin-top:8rpx">{{wiringMsg}}</view>
+    <button class="btn" bindtap="doRecord">记录这组数据</button>
+  </view>
+
+  <!-- 记录 -->
+  <view class="card">
+    <view class="card-title">
+      已记录 {{records.length}} 组
+      <text wx:if="{{records.length}}" class="clear" bindtap="clearRecords">清空</text>
+    </view>
+
+    <view wx:if="{{!records.length}}" class="muted">还没有数据：计算 → 记录 → 改 R2 → 再记录</view>
+
+    <view wx:for="{{records}}" wx:key="id" class="rec">
+      <text class="rec-n">#{{item.seq}}</text>
+      <text class="rec-r2">{{item.r2}}Ω</text>
+      <text class="rec-u">{{item.u}} V</text>
+      <text class="rec-i">{{item.i}} mA</text>
+    </view>
+
+    <button class="btn primary" bindtap="submitReport">提交实验报告</button>
+  </view>
+
+  <view class="foot muted">后端：{{'已连接'}} · 计算耗时 {{lastElapsed}} ms</view>
+</view>

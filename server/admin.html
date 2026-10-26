@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>后台数据 · 3D 电工电子虚拟仿真实训平台</title>
+<style>
+  :root{
+    --bg:#0b1524; --panel:#101f33; --panel2:#16283f; --line:rgba(125,211,252,.18);
+    --text:#dbeafe; --muted:#8fb0d1; --accent:#38bdf8; --ok:#22c55e; --warn:#f59e0b; --err:#ef4444;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.6 "Microsoft YaHei","PingFang SC",system-ui,sans-serif}
+  header{display:flex;align-items:center;gap:14px;padding:14px 22px;background:linear-gradient(180deg,#132a45,#0e1b2c);border-bottom:1px solid var(--line)}
+  header h1{font-size:16px;margin:0;font-weight:700}
+  header .sp{flex:1}
+  .who{font-size:12.5px;color:var(--muted)}
+  .who b{color:#e2f3ff}
+  button{font:inherit;cursor:pointer;border-radius:8px;border:1px solid rgba(125,211,252,.3);background:rgba(56,189,248,.16);color:#bae6fd;padding:6px 12px}
+  button:hover{background:rgba(56,189,248,.28)}
+  button.primary{background:linear-gradient(135deg,#0284c7,#38bdf8);color:#fff;border-color:transparent}
+  main{padding:20px 22px 60px;max-width:1180px;margin:0 auto}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:22px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .card .k{font-size:12px;color:var(--muted)}
+  .card .v{font-size:26px;font-weight:700;color:#e2f3ff;margin-top:2px}
+  section{margin-bottom:26px}
+  section h2{font-size:14px;font-weight:700;margin:0 0 10px;color:#bae6fd}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  th,td{padding:8px 12px;text-align:left;font-size:13px;border-bottom:1px solid rgba(125,211,252,.1)}
+  th{background:var(--panel2);color:#9dc0e6;font-weight:600;font-size:12px}
+  tr:last-child td{border-bottom:none}
+  td.mono{font-variant-numeric:tabular-nums;color:#cbd5e1}
+  .empty{padding:18px;color:var(--muted);font-size:13px;background:var(--panel);border:1px dashed var(--line);border-radius:10px;text-align:center}
+  .tag{display:inline-block;padding:1px 7px;border-radius:20px;font-size:11px}
+  .tag.teacher{background:rgba(34,197,94,.18);color:#bbf7d0;border:1px solid rgba(74,222,128,.35)}
+  .tag.student{background:rgba(56,189,248,.16);color:#bae6fd;border:1px solid rgba(125,211,252,.3)}
+  .hint{font-size:12.5px;color:var(--muted);margin:6px 0 14px}
+  .login{max-width:380px;margin:56px auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
+  .login h2{margin:0 0 4px;font-size:16px}
+  .login p{margin:0 0 16px;font-size:12.5px;color:var(--muted)}
+  .login label{display:block;font-size:12.5px;color:var(--muted);margin:10px 0 4px}
+  .login input{width:100%;padding:9px 11px;border-radius:8px;background:#091627;border:1px solid rgba(125,211,252,.25);color:#eaf3ff;font:inherit;outline:none}
+  .login input:focus{border-color:rgba(56,189,248,.8)}
+  .login .row{margin-top:16px;display:flex;gap:10px}
+  .msg{margin-top:12px;font-size:12.5px;color:#fca5a5}
+  .ok-msg{margin-top:12px;font-size:12.5px;color:#bbf7d0}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚡ 后台数据</h1>
+  <span class="who" id="who"></span>
+  <span class="sp"></span>
+  <button id="btn-refresh" hidden>刷新</button>
+  <button id="btn-logout" hidden>退出</button>
+</header>
+
+<main>
+  <!-- 登录 -->
+  <div class="login" id="login-box">
+    <h2>教师登录</h2>
+    <p>用教师账号登录后可查看全部学生的实验数据</p>
+    <label>用户名</label>
+    <input id="u" autocomplete="username" placeholder="laoshi" />
+    <label>密码</label>
+    <input id="p" type="password" autocomplete="current-password" placeholder="123456" />
+    <div class="row"><button class="primary" id="btn-login">登录</button></div>
+    <div class="msg" id="login-msg"></div>
+  </div>
+
+  <!-- 面板 -->
+  <div id="panel" hidden>
+    <div class="cards" id="cards"></div>
+
+    <section>
+      <h2>最近实验记录 <span class="hint" id="rec-hint"></span></h2>
+      <div id="records"></div>
+    </section>
+
+    <section>
+      <h2>最近实验报告 <span class="hint" id="rep-hint"></span></h2>
+      <div id="reports"></div>
+    </section>
+
+    <section>
+      <h2>用户 <span class="hint" id="usr-hint"></span></h2>
+      <div id="users"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id)
+
+const api = (path, opts = {}) =>
+  fetch(path, { credentials: 'same-origin', ...opts }).then(async (r) => {
+    const t = await r.text()
+    let d = null
+    try { d = t ? JSON.parse(t) : null } catch { d = { raw: t } }
+    if (!r.ok || (d && d.ok === false)) {
+      const e = new Error((d && d.error) || ('HTTP ' + r.status)); e.status = r.status; throw e
+    }
+    return d
+  })
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+}
+function table(headers, rows) {
+  if (!rows.length) return '<div class="empty">还没有数据</div>'
+  return `<table><thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`
+}
+function fmtTime(iso) {
+  if (!iso) return '-'
+  const d = new Date(iso)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+async function load() {
+  const [ov, users] = await Promise.all([api('/api/admin/overview'), api('/api/admin/users')])
+  const recs = await api('/api/admin/records')
+  const st = ov.stats || {}
+
+  $('cards').innerHTML = [
+    ['用户', st.users], ['记录', st.records], ['报告', st.reports],
+    ['实验快照', st.experiments], ['在线会话', st.sessions],
+  ].map(([k, v]) => `<div class="card"><div class="k">${k}</div><div class="v">${v ?? 0}</div></div>`).join('')
+
+  const recRows = (recs.records || []).map((r) => `<tr>
+    <td class="mono">${r.id}</td>
+    <td>${esc(r.display_name)} <span class="hint">(${esc(r.username)})</span></td>
+    <td class="mono">${r.seq}</td>
+    <td class="mono">${r.r2 ?? '-'} Ω</td>
+    <td class="mono">${r.u ?? '-'} V</td>
+    <td class="mono">${r.i ?? '-'} mA</td>
+    <td class="mono">${fmtTime(r.created_at)}</td>
+  </tr>`)
+  $('rec-hint').textContent = `共 ${recRows.length} 条`
+  $('records').innerHTML = table(['ID', '学生', '第几组', 'R2', 'U(R2)', 'I', '时间'], recRows)
+
+  const repRows = (ov.recentReports || []).map((r) => `<tr>
+    <td class="mono">${r.id}</td>
+    <td>${esc(r.display_name)} <span class="hint">(${esc(r.username)})</span></td>
+    <td class="mono">${r.score ?? '-'}</td>
+    <td class="mono">${'★'.repeat(r.stars || 0)}</td>
+    <td>${esc(r.grade || '-')}</td>
+    <td class="mono">${fmtTime(r.created_at)}</td>
+  </tr>`)
+  $('rep-hint').textContent = `共 ${repRows.length} 条`
+  $('reports').innerHTML = table(['ID', '学生', '得分', '星级', '等级', '时间'], repRows)
+
+  const usrRows = (users.users || []).map((u) => `<tr>
+    <td class="mono">${u.id}</td>
+    <td>${esc(u.username)}</td>
+    <td>${esc(u.displayName)}</td>
+    <td><span class="tag ${u.role === 'teacher' ? 'teacher' : 'student'}">${u.role === 'teacher' ? '教师' : '学生'}</span></td>
+    <td class="mono">${fmtTime(u.createdAt)}</td>
+  </tr>`)
+  $('usr-hint').textContent = `共 ${usrRows.length} 个`
+  $('users').innerHTML = table(['ID', '用户名', '显示名', '角色', '注册时间'], usrRows)
+}
+
+async function boot() {
+  try {
+    const me = await api('/api/auth/me')
+    if (!me.user) throw new Error('not logged in')
+    if (me.user.role !== 'teacher') throw new Error('需要教师账号')
+    $('who').innerHTML = `已登录：<b>${esc(me.user.displayName)}</b>（${me.user.role === 'teacher' ? '教师' : '学生'}）`
+    $('login-box').hidden = true
+    $('panel').hidden = false
+    $('btn-refresh').hidden = false
+    $('btn-logout').hidden = false
+    await load()
+  } catch (e) {
+    $('login-box').hidden = false
+    $('panel').hidden = true
+    if (e.status === 403) $('login-msg').textContent = '这个账号不是教师，无法查看后台数据'
+    else if (e.status) $('login-msg').textContent = e.message
+  }
+}
+
+$('btn-login').onclick = async () => {
+  $('login-msg').textContent = ''
+  try {
+    await api('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: $('u').value.trim(), password: $('p').value }),
+    })
+    await boot()
+  } catch (e) {
+    $('login-msg').textContent = e.message
+  }
+}
+$('p').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btn-login').click() })
+$('btn-refresh').onclick = () => load().catch((e) => alert(e.message))
+$('btn-logout').onclick = async () => {
+  await api('/api/auth/logout', { method: 'POST' }).catch(() => {})
+  location.reload()
+}
+
+boot()
+setInterval(() => {
+  if (!$('panel').hidden) load().catch(() => {})
+}, 5000)
+</script>
+</body>
+</html>

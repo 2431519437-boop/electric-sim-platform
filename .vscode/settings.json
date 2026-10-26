@@ -1,0 +1,10 @@
+{
+  // 让 VS Code 自动识别 GBK 编码的文件（.bat 启动脚本是 GBK + CRLF，否则中文会显示成乱码）
+  "files.autoGuessEncoding": true,
+  // 终端里默认用 PowerShell，方便跑 npm
+  "terminal.integrated.defaultProfile.windows": "PowerShell",
+  // 这个项目用了比较多的中文注释，字号略大一点更舒服
+  "editor.fontSize": 14,
+  // 保存时不自动格式化，避免动到别人的代码风格
+  "editor.formatOnSave": false
+}
