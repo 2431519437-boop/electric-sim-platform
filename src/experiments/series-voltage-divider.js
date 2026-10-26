@@ -62,6 +62,15 @@ export const SPEC = {
       { key: 'u', label: 'U/V' },
       { key: 'i', label: 'I/mA' },
     ],
+    /**
+     * 从当前读数生成一行数据。
+     * ctx = { variable: 可变电阻当前阻值, volt: 电压表读数(V), current: 电流表读数(A), params }
+     */
+    read: ({ variable, volt, current }) => ({
+      r2: variable,
+      u: Number(volt.toFixed(2)),
+      i: Number((current * 1000).toFixed(2)),
+    }),
   },
 
   /* 计分参数 */

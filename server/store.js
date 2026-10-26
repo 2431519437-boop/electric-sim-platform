@@ -19,16 +19,20 @@ import {
 
 /* ---------------- 实验记录 ---------------- */
 
-export function recordAdd(userId, record, experimentId = null) {
-  return addRecord(userId, record, experimentId)
+/**
+ * 注意：这三个包装必须把「实验标识」透传下去。
+ * 之前签名过窄（只收 userId），导致上层按实验过滤/清理时静默失效。
+ */
+export function recordAdd(userId, record, options = {}) {
+  return addRecord(userId, record, options)
 }
 
-export function recordList(userId) {
-  return listRecords(userId)
+export function recordList(userId, experimentKey = null) {
+  return listRecords(userId, experimentKey)
 }
 
-export function recordClear(userId) {
-  return clearRecords(userId)
+export function recordClear(userId, experimentKey = null) {
+  return clearRecords(userId, experimentKey)
 }
 
 /* ---------------- 实验报告 ---------------- */

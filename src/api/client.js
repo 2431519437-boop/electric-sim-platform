@@ -151,12 +151,22 @@ export const authApi = {
 
 /* ---------------- 数据 ---------------- */
 
-export function saveRecordRemote(record) {
-  return request('/api/records', { method: 'POST', body: { record } })
+/**
+ * 保存一条实验记录。
+ * @param {object} record 通用数据（键由实验配置的 dataPoints.columns 决定）
+ * @param {string} experimentKey 实验 id，如 'series-voltage-divider'
+ */
+export function saveRecordRemote(record, experimentKey) {
+  return request('/api/records', {
+    method: 'POST',
+    body: { record, experimentKey },
+  })
 }
 
-export function listRecordsRemote() {
-  return request('/api/records')
+/** 拉取记录；不传 experimentKey 则返回该用户全部实验的记录 */
+export function listRecordsRemote(experimentKey) {
+  const qs = experimentKey ? `?exp=${encodeURIComponent(experimentKey)}` : ''
+  return request('/api/records' + qs)
 }
 
 export function saveReportRemote(report) {

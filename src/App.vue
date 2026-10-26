@@ -880,18 +880,21 @@ function recordData() {
   }
   const uTheory = experiment.value.formulas.uTheory({ ...params, R2: r2v })
   const iTheory = experiment.value.formulas.iTheory({ ...params, R2: r2v })
-  const rec = {
-    n: records.value.length + 1,
-    r2: r2v,
-    u: voltR2.value.toFixed(2),
-    i: (currentI.value * 1000).toFixed(2),
-    uTheory: uTheory.toFixed(2),
-    iTheory: iTheory.toFixed(2),
-  }
+
+  // 这一行的各列值由实验配置声明（dataPoints.read），不再写死 r2/u/i
+  const row = experiment.value.dataPoints.read({
+    variable: r2v,
+    volt: voltR2.value,
+    current: currentI.value,
+    params,
+  })
+  const data = { ...row, uTheory: Number(uTheory.toFixed(2)), iTheory: Number(iTheory.toFixed(2)) }
+  const rec = { n: records.value.length + 1, ...data }
+
   records.value.push(rec)
   // 已登录且有后端时顺手落库（失败不影响本地记录）
   if (backendReady.value && user.value) {
-    saveRecordRemote(rec)
+    saveRecordRemote(data, experiment.value.id)
       .then(() => pushLog('[记录] 已保存到账号', 'ok'))
       .catch(() => pushLog('[记录] 保存到账号失败（仅本地）', 'warn'))
   }

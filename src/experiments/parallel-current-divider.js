@@ -51,6 +51,12 @@ export const SPEC = {
       { key: 'u', label: 'U/V' },
       { key: 'i', label: 'I₂/mA' },
     ],
+    /** 并联实验：电压表读并联电压，电流表读 R2 支路电流 */
+    read: ({ variable, volt, current }) => ({
+      r2: variable,
+      u: Number(volt.toFixed(2)),
+      i: Number((current * 1000).toFixed(2)),
+    }),
   },
 
   scoring: {

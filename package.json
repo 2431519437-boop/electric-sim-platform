@@ -17,6 +17,7 @@
     "check:components": "node scripts/check-components.mjs",
     "check:graph": "node scripts/check-graphmatch.mjs",
     "test:grading": "node scripts/tests/grading.test.mjs",
+    "test:records": "node scripts/tests/records.test.mjs",
     "check": "node scripts/check-core.mjs && node scripts/check-components.mjs && node scripts/check-graphmatch.mjs && node scripts/tests/grading.test.mjs"
   },
   "dependencies": {

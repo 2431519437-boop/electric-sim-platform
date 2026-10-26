@@ -82,6 +82,28 @@ const MIGRATIONS = [
   );
   CREATE INDEX idx_rep_user ON reports(user_id);
   `,
+
+  // v2：记录表泛化 —— 加实验标识与通用数据列，旧列保留以兼容既有查询/导出
+  `
+  ALTER TABLE records ADD COLUMN experiment_key TEXT;
+  ALTER TABLE records ADD COLUMN data_json TEXT;
+
+  UPDATE records
+     SET experiment_key = 'series-voltage-divider'
+   WHERE experiment_key IS NULL;
+
+  UPDATE records
+     SET data_json = json_object(
+           'r2', r2,
+           'u', u,
+           'i', i,
+           'uTheory', u_theory,
+           'iTheory', i_theory
+         )
+   WHERE data_json IS NULL;
+
+  CREATE INDEX IF NOT EXISTS idx_rec_user_exp ON records(user_id, experiment_key);
+  `,
 ]
 
 export function migrate() {
@@ -203,23 +225,63 @@ export function getExperiment(userId, id) {
 
 const num = (v) => (v === null || v === undefined || v === '' ? null : Number(v))
 
-export function addRecord(userId, record, experimentId = null) {
-  const prev = db.prepare('SELECT COUNT(*) AS c FROM records WHERE user_id = ?').get(userId)
+/**
+ * 旧客户端的记录不带实验标识，一律归到串联实验（v2 迁移里的历史数据也这样归）。
+ * 新客户端必须显式传 experimentKey。
+ */
+export const DEFAULT_EXPERIMENT_KEY = 'series-voltage-divider'
+
+/**
+ * 把请求体里的记录统一成 data 对象。
+ * - 新格式：{ data: {...} }
+ * - 旧格式：外层直接是 { r2, u, i, uTheory, iTheory }
+ * 两种同时出现时**合并**而不是丢弃，避免调用方传了字段却被静默忽略。
+ */
+function toData(record) {
+  if (!record || typeof record !== 'object') return {}
+  const out = {}
+  const put = (k, v) => {
+    if (v !== undefined && v !== null) out[k] = v
+  }
+  if (record.data && typeof record.data === 'object') {
+    for (const [k, v] of Object.entries(record.data)) put(k, v)
+  }
+  put('r2', record.r2)
+  put('u', record.u)
+  put('i', record.i)
+  put('uTheory', record.uTheory ?? record.u_theory)
+  put('iTheory', record.iTheory ?? record.i_theory)
+  return out
+}
+
+export function addRecord(userId, record, options = {}) {
+  const { experimentId = null, experimentKey = DEFAULT_EXPERIMENT_KEY } = options
+  const key = experimentKey || DEFAULT_EXPERIMENT_KEY
+  const data = toData(record)
+
+  // seq 按"同一用户 + 同一实验"递增
+  const prev = db
+    .prepare('SELECT COUNT(*) AS c FROM records WHERE user_id = ? AND experiment_key = ?')
+    .get(userId, key)
   const seq = Number(prev.c) + 1
+
   const info = db
     .prepare(
-      `INSERT INTO records (user_id, experiment_id, seq, r2, u, i, u_theory, i_theory, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO records
+         (user_id, experiment_id, experiment_key, seq, r2, u, i, u_theory, i_theory, data_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       userId,
       experimentId,
+      key,
       seq,
-      num(record.r2),
-      num(record.u),
-      num(record.i),
-      num(record.uTheory ?? record.u_theory),
-      num(record.iTheory ?? record.i_theory),
+      num(data.r2),
+      num(data.u),
+      num(data.i),
+      num(data.uTheory),
+      num(data.iTheory),
+      JSON.stringify(data),
       nowIso()
     )
   return getRecord(userId, Number(info.lastInsertRowid))
@@ -229,12 +291,21 @@ export function getRecord(userId, id) {
   return db.prepare('SELECT * FROM records WHERE id = ? AND user_id = ?').get(id, userId) || null
 }
 
-export function listRecords(userId) {
+/** experimentKey 为空时返回该用户的全部记录（兼容旧调用） */
+export function listRecords(userId, experimentKey = null) {
+  if (experimentKey) {
+    return db
+      .prepare('SELECT * FROM records WHERE user_id = ? AND experiment_key = ? ORDER BY seq')
+      .all(userId, experimentKey)
+  }
   return db.prepare('SELECT * FROM records WHERE user_id = ? ORDER BY seq').all(userId)
 }
 
-export function clearRecords(userId) {
-  const n = db.prepare('DELETE FROM records WHERE user_id = ?').run(userId).changes
+export function clearRecords(userId, experimentKey = null) {
+  const n = experimentKey
+    ? db.prepare('DELETE FROM records WHERE user_id = ? AND experiment_key = ?').run(userId, experimentKey)
+        .changes
+    : db.prepare('DELETE FROM records WHERE user_id = ?').run(userId).changes
   return { deleted: Number(n) }
 }
 

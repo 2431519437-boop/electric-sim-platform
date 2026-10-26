@@ -274,10 +274,15 @@ const routes = {
   },
 
   /* 记录 */
-  'GET /api/records': async (req, res) => {
+  'GET /api/records': async (req, res, url) => {
     const user = requireUser(req, res)
     if (!user) return
-    sendJson(res, 200, { ok: true, records: recordList(user.id) })
+    const expKey = url?.searchParams?.get('exp') || null
+    sendJson(res, 200, {
+      ok: true,
+      experimentKey: expKey,
+      records: recordList(user.id, expKey),
+    })
   },
 
   'POST /api/records': async (req, res) => {
@@ -286,14 +291,23 @@ const routes = {
     const body = await readBody(req)
     const rec = body.record || body
     if (!rec || typeof rec !== 'object') return fail(res, 400, 'record 必须是对象')
-    const saved = recordAdd(user.id, rec, body.experimentId ?? null)
-    sendJson(res, 200, { ok: true, record: saved, count: recordList(user.id).length })
+    const experimentKey = body.experimentKey || rec.experimentKey || null
+    const saved = recordAdd(user.id, rec, {
+      experimentId: body.experimentId ?? null,
+      experimentKey,
+    })
+    sendJson(res, 200, {
+      ok: true,
+      record: saved,
+      count: recordList(user.id, experimentKey).length,
+    })
   },
 
-  'DELETE /api/records': async (req, res) => {
+  'DELETE /api/records': async (req, res, url) => {
     const user = requireUser(req, res)
     if (!user) return
-    sendJson(res, 200, { ok: true, ...recordClear(user.id) })
+    const expKey = url?.searchParams?.get('exp') || null
+    sendJson(res, 200, { ok: true, ...recordClear(user.id, expKey) })
   },
 
   /* 报告 */
