@@ -18,7 +18,9 @@
     "check:graph": "node scripts/check-graphmatch.mjs",
     "test:grading": "node scripts/tests/grading.test.mjs",
     "test:records": "node scripts/tests/records.test.mjs",
-    "check": "node scripts/check-core.mjs && node scripts/check-components.mjs && node scripts/check-graphmatch.mjs && node scripts/tests/grading.test.mjs"
+    "test:analysis": "node scripts/tests/analysis.test.mjs",
+    "test:http": "node scripts/tests/records-http.test.mjs && node scripts/tests/analyze-http.test.mjs",
+    "check": "node scripts/check-core.mjs && node scripts/check-components.mjs && node scripts/check-graphmatch.mjs && node scripts/tests/grading.test.mjs && node scripts/tests/analysis.test.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^7.6.9",

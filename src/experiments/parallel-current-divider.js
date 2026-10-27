@@ -31,9 +31,10 @@ export const SPEC = {
     variableResistor: 'RHEO',
   },
 
+  /* 并联实验：电压表并联在整个并联组合两端（等于 R2 两端），电流表串在 R2 支路 */
   measurements: {
-    voltmeter: { acrossType: 'RHEO' },
-    ammeter: { branchType: 'RHEO' },
+    voltmeter: { acrossRole: 'variableResistor' },
+    ammeter: { branchRole: 'variableResistor' },
   },
 
   formulas: {

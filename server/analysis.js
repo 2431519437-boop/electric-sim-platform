@@ -9,9 +9,11 @@
  * 因此后端与前端的计算结果完全一致（同一份源码，不是两套实现）。
  */
 
-import { buildElectricalNodes, detectShortCircuit, PIN } from '../src/circuit/unionFindTopo.js'
+import { buildElectricalNodes, detectShortCircuit } from '../src/circuit/unionFindTopo.js'
 import { generateNetlist, solveCircuit } from '../src/circuit/circuitCore.js'
 import { evaluateWiring } from '../src/circuit/graphMatch.js'
+import { computeReadings } from '../src/circuit/readings.js'
+import { getExperiment, DEFAULT_EXPERIMENT_ID } from '../src/experiments/index.js'
 
 const isObj = (v) => v !== null && typeof v === 'object'
 const asArray = (v) => (Array.isArray(v) ? v : [])
@@ -44,10 +46,13 @@ function mapToObject(m) {
 
 /**
  * 执行一次完整分析，等价于前端 App.vue 里的 runAnalysis()
- * @param {object} payload { boards, placements, wires, components, sourceCompId? }
+ * @param {object} payload { boards, placements, wires, components, sourceCompId?, experimentKey? }
  */
 export function analyze(payload) {
   const t0 = process.hrtime.bigint()
+
+  // 实验配置决定判分标准与仪表读数位置；未指定时回退到默认实验
+  const spec = getExperiment(payload.experimentKey || DEFAULT_EXPERIMENT_ID)
 
   const boards = asArray(payload.boards)
   const placements = asArray(payload.placements)
@@ -82,18 +87,19 @@ export function analyze(payload) {
     sourceCompId: source?.id,
   })
 
-  // 5) 接线拓扑判定（带标签多重图的子图同构匹配）
-  const wiring = evaluateWiring({ components, nodeOf })
+  // 5) 接线拓扑判定（带标签多重图的子图同构匹配）—— 标准答案来自实验配置
+  const wiring = evaluateWiring({
+    components,
+    nodeOf,
+    target: spec.grading.referenceCircuits,
+    requiredTypes: spec.grading.requiredTypes,
+    typeNames: spec.grading.typeNames,
+    messages: spec.grading.messages,
+  })
 
-  // 6) 仪表读数：电位器 R2 两端电压 + 回路电流
-  const readings = { u: 0, i: 0 }
-  const r2 = components.find((c) => c.type === 'RHEO')
-  if (r2 && sol.ok) {
-    const nA = nodeOf.get(PIN(r2.id, r2.pins[0].name))
-    const nB = nodeOf.get(PIN(r2.id, r2.pins[1].name))
-    readings.u = Math.abs((sol.nodeVoltages.get(nA) ?? 0) - (sol.nodeVoltages.get(nB) ?? 0))
-    readings.i = Math.abs(sol.branchCurrents.get(r2.id) || 0)
-  }
+  // 6) 仪表读数：测哪个元件由配置的 measurements 决定（不再固定取 RHEO）
+  const meters = computeReadings({ spec, components, nodeOf, solution: sol })
+  const readings = { u: meters.u, i: meters.i }
 
   // 节点明细（教学展示用）
   const nodeList = nodes.map((n) => ({
@@ -132,6 +138,9 @@ export function analyze(payload) {
       },
       readings,
       sourceCompId: source?.id ?? null,
+      // 便于排查：这次用的是哪份实验配置、测的是哪个元件
+      experimentKey: spec.id,
+      meterTargets: { volt: meters.voltTargetId, amp: meters.ampTargetId },
     },
     elapsedMs: Math.round(elapsedMs * 1000) / 1000,
   }

@@ -151,6 +151,7 @@ import { LIBRARY } from './circuit/componentLibrary.js'
 import { buildElectricalNodes, detectShortCircuit, PIN } from './circuit/unionFindTopo.js'
 import { generateNetlist, solveCircuit } from './circuit/circuitCore.js'
 import { evaluateWiring } from './circuit/graphMatch.js'
+import { computeReadings } from './circuit/readings.js'
 import AuthModal from './components/AuthModal.vue'
 import ServerModal from './components/ServerModal.vue'
 import {
@@ -642,7 +643,7 @@ async function runAnalysis(silent = false) {
   // 任何异常都自动回退到下面的本地计算，保证离线也能用。
   if (await detectBackend()) {
     try {
-      const res = await analyzeRemote(state)
+      const res = await analyzeRemote(state, experiment.value.id)
       if (res && res.ok && res.analysis) {
         applyRemoteAnalysis(res, silent)
         return
@@ -743,18 +744,15 @@ async function runAnalysis(silent = false) {
     const m = [...wiringResult.mapping.entries()].map(([k, v]) => `${k}→${v}`).join(' ')
     pushLog(`[拓扑] 同构映射：${m}`)
   }
-  const r2 = state.components.find((c) => c.type === 'RHEO')
-
-  // 6) 读取电表数值（R2 电位器两端电压 / 回路电流）
-  if (r2) {
-    const nA = topo.nodeOf.get(PIN(r2.id, r2.pins[0].name))
-    const nB = topo.nodeOf.get(PIN(r2.id, r2.pins[1].name))
-    voltR2.value = Math.abs((sol.nodeVoltages.get(nA) ?? 0) - (sol.nodeVoltages.get(nB) ?? 0))
-    currentI.value = Math.abs(sol.branchCurrents.get(r2.id) || 0)
-  } else {
-    voltR2.value = 0
-    currentI.value = 0
-  }
+  // 6) 读取电表数值：测哪个元件由实验配置的 measurements 决定
+  const meters = computeReadings({
+    spec: experiment.value,
+    components: state.components,
+    nodeOf: topo.nodeOf,
+    solution: sol,
+  })
+  voltR2.value = meters.u
+  currentI.value = meters.i
 
   pushLog(
     `[结果] U(R2) = ${voltR2.value.toFixed(3)} V ｜ I = ${(currentI.value * 1000).toFixed(3)} mA`,

@@ -38,10 +38,10 @@ export const SPEC = {
     variableResistor: 'RHEO',
   },
 
-  /* 仪表定义：电压表并联在哪个元件两端、电流表串在哪条回路 */
+  /* 仪表定义：用「角色」而不是具体元件类型，换元件时不用改这里 */
   measurements: {
-    voltmeter: { acrossType: 'RHEO' },
-    ammeter: { branchType: 'RHEO' },
+    voltmeter: { acrossRole: 'variableResistor' },
+    ammeter: { branchRole: 'variableResistor' },
   },
 
   /* 理论值：params = { U0, R1, R2 }，由场景里实际元件参数提供 */

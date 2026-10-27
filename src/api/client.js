@@ -191,7 +191,12 @@ export function loadExperimentRemote(id) {
 
 /* ---------------- 分析 ---------------- */
 
-export function analyzeRemote(state) {
+/**
+ * 让后端做一次完整分析。
+ * @param {object} state 场景状态
+ * @param {string} experimentKey 实验 id —— 后端据此选择判分标准与仪表测量位置
+ */
+export function analyzeRemote(state, experimentKey) {
   return request('/api/analyze', {
     method: 'POST',
     auth: false,
@@ -201,6 +206,7 @@ export function analyzeRemote(state) {
       wires: state.wires,
       components: state.components,
       sourceCompId: (state.components || []).find((c) => c.type === 'VSRC')?.id,
+      experimentKey,
     },
   })
 }
