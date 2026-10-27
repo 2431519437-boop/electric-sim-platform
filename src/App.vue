@@ -148,7 +148,7 @@ import FlowModal from './components/FlowModal.vue'
 import ReportModal from './components/ReportModal.vue'
 import ConsolePanel from './components/ConsolePanel.vue'
 import { LIBRARY } from './circuit/componentLibrary.js'
-import { buildElectricalNodes, detectShortCircuit, PIN } from './circuit/unionFindTopo.js'
+import { buildElectricalNodes, detectShortCircuit } from './circuit/unionFindTopo.js'
 import { generateNetlist, solveCircuit } from './circuit/circuitCore.js'
 import { evaluateWiring } from './circuit/graphMatch.js'
 import { computeReadings } from './circuit/readings.js'
@@ -913,39 +913,29 @@ function useHint() {
   score.value = Math.max(0, score.value - experiment.value.scoring.hintPenalty)
   pushLog(`[提示] 使用提示 -${experiment.value.scoring.hintPenalty} 分`, 'warn')
 
-  // 先用图同构判定的结论给提示（比"猜哪根线没连"更准）
-  if (wiring.value && !wiring.value.ok) {
-    showToast(`提示：${wiring.value.message}`, 'warn')
-    pushLog(`[提示] ${wiring.value.message}`, 'warn')
+  const hints = experiment.value.hints || {}
+  const w = wiring.value
+
+  // 还没分析过：先让系统算一次。图同构的结论比"猜哪根线没连"精确得多。
+  if (!w) {
+    const msg = hints.notAnalyzed || '先点「开始 / 重新计算」让系统分析一次电路'
+    showToast(`提示：${msg}`, 'warn')
+    pushLog(`[提示] ${msg}`, 'warn')
     return
   }
 
-  const st = engine.value.exportState()
-  const topo = buildElectricalNodes({ boards: st.boards, placements: st.placements, wires: st.wires })
-  const vs = st.components.find((c) => c.type === 'VSRC')
-  const r1 = st.components.find((c) => c.type === 'RES')
-  const r2 = st.components.find((c) => c.type === 'RHEO')
-  if (!vs || !r1 || !r2) {
-    showToast('提示：请先添加恒压源、固定电阻 R1 与电位器 R2', 'ok')
+  // 接线有问题：判分结论本身就带具体原因（缺少哪个元件、极性反、缺几处连接…）
+  // 这些文案由实验配置的 grading.messages 生成，这里不再做任何拓扑假设。
+  if (!w.ok) {
+    showToast(`提示：${w.message}`, 'warn')
+    pushLog(`[提示] ${w.message}`, 'warn')
     return
   }
-  const targets = [
-    [vs.id, vs.pins[0].name, r1.id, r1.pins[0].name],
-    [r1.id, r1.pins[1].name, r2.id, r2.pins[0].name],
-    [r2.id, r2.pins[1].name, vs.id, vs.pins[1].name],
-  ]
-  const missing = targets.filter(([c1, p1, c2, p2]) => {
-    const n1 = topo.nodeOf.get(PIN(c1, p1))
-    const n2 = topo.nodeOf.get(PIN(c2, p2))
-    return !n1 || !n2 || n1 !== n2
-  })
-  if (missing.length) {
-    const [c1, p1, c2, p2] = missing[0]
-    showToast(`提示：请连接「${c1}.${p1}」与「${c2}.${p2}」`, 'ok')
-    pushLog(`[提示] 待连接：${c1}.${p1} ↔ ${c2}.${p2}`, 'warn')
-  } else {
-    showToast('提示：接线已完整，请点击「开始」计算，并把电源调至 +6V', 'ok')
-  }
+
+  // 接线正确：提示下一步动作（文案来自实验配置）
+  const next = hints.nextStep || '接线已完整，请点「开始 / 重新计算」并记录数据'
+  showToast(`提示：${next}`, 'ok')
+  pushLog(`[提示] ${next}`, 'ok')
 }
 
 /* ================= 流程弹窗 ================= */

@@ -67,6 +67,11 @@ export const SPEC = {
     passScore: 60,
   },
 
+  hints: {
+    notAnalyzed: '先点「开始 / 重新计算」让系统分析一次电路',
+    nextStep: '接线已完整，请点「开始 / 重新计算」，并把电源调至 +6V',
+  },
+
   theory: {
     title: '理论参考',
     rows: (p) => [
