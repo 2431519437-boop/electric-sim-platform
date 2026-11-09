@@ -18,6 +18,14 @@ import { getExperiment } from '../../src/experiments/index.js'
 
 const SERIES = 'series-voltage-divider'
 const PARALLEL = 'parallel-current-divider'
+const LED = 'led-current-limiting'
+
+/** 报告里显示用的实验简称 */
+const EXP_LABEL = {
+  [SERIES]: '串联分压',
+  [PARALLEL]: '并联分流',
+  [LED]: 'LED 限流',
+}
 
 /* ---------------- 可复现随机数 ---------------- */
 function mulberry32(seed) {
@@ -58,8 +66,9 @@ function build({ edges }) {
 
   const comps = shuffle(edges).map((e, i) => {
     const id = e.compId || `C${i + 1}`
-    // 电源有方向，引脚顺序不能动；电阻/LED 两端无极性语义，可以随机交换
-    const flip = e.type !== 'VSRC' && rand() < 0.5
+    // 只有两端对称的无源元件才允许随机交换引脚；
+    // 电源和 LED 有极性，交换引脚等于改变器件方向，不属于"无关差异"
+    const flip = (e.type === 'RES' || e.type === 'RHEO') && rand() < 0.5
     const p0 = flip ? 'p2' : 'p1'
     const p1 = flip ? 'p1' : 'p2'
     const n0 = flip ? e.to : e.from
@@ -258,6 +267,90 @@ const FAMILIES = [
       note: '两节点图自同构吸收',
     }),
   },
+
+  /* ===== LED 限流实验（标准答案含方向性元件，极性可被检出）===== */
+  {
+    exp: LED,
+    name: '正确 LED 限流回路',
+    count: 25,
+    make: () => ({
+      edges: [
+        { compId: 'VS1', type: 'VSRC', from: 'p', to: 'n' },
+        { compId: 'R2', type: 'RHEO', value: 470, from: 'p', to: 'm' },
+        { compId: 'LED1', type: 'LED', from: 'm', to: 'n' },
+      ],
+      expectOk: true,
+    }),
+  },
+  {
+    exp: LED,
+    name: '正确 LED 回路（R2 与 LED 换位）',
+    count: 25,
+    make: () => ({
+      edges: [
+        { compId: 'VS1', type: 'VSRC', from: 'p', to: 'n' },
+        { compId: 'LED1', type: 'LED', from: 'p', to: 'm' },
+        { compId: 'R2', type: 'RHEO', value: 470, from: 'm', to: 'n' },
+      ],
+      expectOk: true,
+    }),
+  },
+  {
+    exp: LED,
+    name: 'LED 极性接反',
+    count: 25,
+    make: () => ({
+      edges: [
+        { compId: 'VS1', type: 'VSRC', from: 'p', to: 'n' },
+        { compId: 'R2', type: 'RHEO', value: 470, from: 'p', to: 'm' },
+        // 阳极与阴极对调
+        { compId: 'LED1', type: 'LED', from: 'n', to: 'm' },
+      ],
+      expectOk: false,
+      expectPolarity: true,
+    }),
+  },
+  {
+    exp: LED,
+    name: '电源极性接反',
+    count: 25,
+    make: () => ({
+      edges: [
+        { compId: 'VS1', type: 'VSRC', from: 'n', to: 'p' },
+        { compId: 'R2', type: 'RHEO', value: 470, from: 'p', to: 'm' },
+        { compId: 'LED1', type: 'LED', from: 'm', to: 'n' },
+      ],
+      expectOk: false,
+      expectPolarity: true,
+    }),
+  },
+  {
+    exp: LED,
+    name: '接成并联（结构错）',
+    count: 25,
+    make: () => ({
+      edges: [
+        { compId: 'VS1', type: 'VSRC', from: 'p', to: 'n' },
+        { compId: 'R2', type: 'RHEO', value: 470, from: 'p', to: 'n' },
+        { compId: 'LED1', type: 'LED', from: 'p', to: 'n' },
+      ],
+      expectOk: false,
+    }),
+  },
+  {
+    exp: LED,
+    name: '多接了一个固定电阻',
+    count: 25,
+    make: () => ({
+      edges: [
+        { compId: 'VS1', type: 'VSRC', from: 'p', to: 'n' },
+        { compId: 'R1', type: 'RES', value: 200, from: 'p', to: 'a' },
+        { compId: 'R2', type: 'RHEO', value: 470, from: 'a', to: 'm' },
+        { compId: 'LED1', type: 'LED', from: 'm', to: 'n' },
+      ],
+      expectOk: false,
+    }),
+  },
 ]
 
 /* ---------------- 执行 ---------------- */
@@ -411,9 +504,10 @@ const outPath = outIdx > -1 ? process.argv[outIdx + 1] : null
 
 if (outPath) {
   const famRows = FAMILIES.map((fam) => {
-    const rs = results.filter((r) => r.family === fam.name)
+    // 不同实验可能有同名用例族（如两个"接成并联"），必须按 实验+族名 一起过滤
+    const rs = results.filter((r) => r.family === fam.name && r.exp === fam.exp)
     const ok = rs.filter((r) => r.pass).length
-    return `| ${fam.name} | ${fam.exp === SERIES ? '串联' : '并联'} | ${rs.length} | ${ok} | ${(
+    return `| ${fam.name} | ${EXP_LABEL[fam.exp] || fam.exp} | ${rs.length} | ${ok} | ${(
       (ok / rs.length) * 100
     ).toFixed(1)}% |`
   }).join('\n')
@@ -484,23 +578,25 @@ ${mech
 结论：方向比对逻辑（\`edgesCompatible\` 中对 \`directed\` 参考边比较端点朝向）工作正常，
 在非对称拓扑中能准确报出「电源极性接反」。
 
-## 6. 一个必须说明的设计取舍：为什么"极性接反"判通过
+## 6. 关于"极性接反"判定口径的说明
 
-验证过程中发现：**在两个现有实验里，把电源接反会被判为通过**。这不是缺陷，而是拓扑等价：
+三个实验对「极性接反」的处理不同，这是**拓扑等价**决定的，不是缺陷：
 
-| 实验 | 现象 | 原因 |
+| 实验 | 接反后的判定 | 原因 |
 |---|---|---|
-| 串联分压 | 接反后与「R1/R2 换位」的标准答案同构 | 串联回路互换两个电阻的位置，电压电流幅值完全相同；接反电源等价于该互换 |
-| 并联分流 | 接反后是同一张两节点图的自同构 | 并联只有两个电气节点，接反 = 交换节点标号，边集合不变 |
+| 串联分压 | ✅ 通过 | 接反与「R1/R2 换位」的标准答案同构；串联回路互换电阻位置，电压电流幅值完全相同 |
+| 并联分流 | ✅ 通过 | 并联只有两个电气节点，接反 = 交换节点标号，是同一张图的自同构 |
+| **LED 限流** | ❌ **不通过，报极性反** | 标准答案含方向性元件 LED，接反后无法被任何对称性吸收 |
 
-因此按平台既定的判定原则「**电气等价即通过**」，判通过是自洽的。
+前两个实验按平台既定原则「电气等价即通过」判通过是自洽的；
+LED 实验则因为 LED 必须正向导通，极性接反会真实导致不导通，必须判错。
 
-**这个取舍的边界**：只有当标准答案含**方向性元件**（LED、二极管、电解电容）时，
-极性接反才无法被对称性吸收，才会被单独报出（第 5 节已验证该机制可用）。
+**结论**：极性检测不是"时灵时不灵"，而是**取决于标准答案里有没有方向性约束**。
+这也说明为什么第 5 节的机制验证要单独做 ---- 它把"机制有效"与"被对称性吸收"两件事分开了。
 
-若教学上要求"必须按图纸正接"，正确做法不是在图同构里加特例，而是：
-1. 在标准答案中加入 LED 等方向性元件（本平台场景内已预置 LED，扩展即可）；
-2. 或把"仪表正负极性"单独作为一项检查（与拓扑判定解耦）。
+若要前两个实验也严格要求正接，正确做法不是在图同构里加特例，而是：
+1. 在标准答案中加入 LED 等方向性元件；或
+2. 把"仪表正负极性"单独作为一项检查（与拓扑判定解耦）。
 
 ## 7. 判定口径说明
 

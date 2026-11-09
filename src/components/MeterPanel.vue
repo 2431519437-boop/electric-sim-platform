@@ -17,7 +17,7 @@
     <div class="meter">
       <div class="m-head">
         <span class="m-lab">电压表 <b>V</b></span>
-        <span class="m-range">并联在 R2 两端</span>
+        <span class="m-range">{{ voltLabel }}</span>
       </div>
       <div class="m-val">
         {{ hasSolution ? voltR2.toFixed(2) : '--.--' }}<em>V</em>
@@ -28,7 +28,7 @@
     <div class="meter">
       <div class="m-head">
         <span class="m-lab">电流表 <b>A</b></span>
-        <span class="m-range">串联在回路中</span>
+        <span class="m-range">{{ ampLabel }}</span>
       </div>
       <div class="m-val">
         {{ hasSolution ? (currentI * 1000).toFixed(2) : '--.--' }}<em>mA</em>
@@ -46,6 +46,9 @@ const props = defineProps({
   shorted: { type: Boolean, default: false },
   circuitOk: { type: Boolean, default: false },
   wiringText: { type: String, default: '' },
+  /** 仪表的说明文字由实验配置提供：不同实验测的对象不同 */
+  voltLabel: { type: String, default: '并联在被测元件两端' },
+  ampLabel: { type: String, default: '串联在回路中' },
 })
 
 function barPct(v, max) {

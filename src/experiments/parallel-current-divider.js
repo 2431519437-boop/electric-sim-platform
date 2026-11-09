@@ -31,10 +31,17 @@ export const SPEC = {
     variableResistor: 'RHEO',
   },
 
+  /* 电源要求：数据记录前必须把电源调到这个电压附近 */
+  power: {
+    requiredSourceV: 6,
+    tolerance: 0.2,
+  },
+
   /* 并联实验：电压表并联在整个并联组合两端（等于 R2 两端），电流表串在 R2 支路 */
   measurements: {
     voltmeter: { acrossRole: 'variableResistor' },
     ammeter: { branchRole: 'variableResistor' },
+    labels: { volt: '并联在 R2 两端', amp: '串联在 R2 支路中' },
   },
 
   formulas: {
@@ -106,6 +113,7 @@ export const SPEC = {
       title: '🔧 实验电路图',
       subtitle: '并联回路：R1 与 R2 并接在电源两端（电压表并联、电流表串在 R2 支路）',
       confirmText: '开始自主连线',
+      flashTip: '电源+ 分别接 R1、R2 的一端，电源− 接它们的另一端',
       html: `
       <div style="text-align:center">
         <svg width="470" height="215" viewBox="0 0 470 215" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">

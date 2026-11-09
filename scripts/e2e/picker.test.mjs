@@ -86,8 +86,12 @@ await ev(`(() => {
 await goto(BASE + '/')
 const s1 = await snapshot()
 check('选择页可见', s1.pickerVisible === true, JSON.stringify(s1.pickerVisible))
-check('卡片数量为 2', s1.cards.length === 2, JSON.stringify(s1.cards))
-check('卡片标题正确', s1.cards[0] === '串联电路分压规律' && s1.cards[1] === '并联电路分流规律', JSON.stringify(s1.cards))
+check('卡片数量为 3', s1.cards.length === 3, JSON.stringify(s1.cards))
+check('卡片标题正确',
+  s1.cards[0] === '串联电路分压规律' &&
+    s1.cards[1] === '并联电路分流规律' &&
+    s1.cards[2] === 'LED 限流电阻的选择',
+  JSON.stringify(s1.cards))
 check('选择页阶段场景为空（未预置元件）', (s1.components || []).length === 0, JSON.stringify(s1.components))
 
 /* ---------- 2. 点第二张卡片 → 并联 ---------- */

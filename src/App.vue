@@ -74,6 +74,8 @@
           :shorted="!!shorts.length"
           :circuit-ok="circuitOk"
           :wiring-text="wiring?.message || ''"
+          :volt-label="experiment.measurements.labels?.volt || '并联在被测元件两端'"
+          :amp-label="experiment.measurements.labels?.amp || '串联在回路中'"
         />
         <ConsolePanel :logs="logs" />
       </div>
@@ -829,8 +831,9 @@ function applyRemoteAnalysis(res, silent) {
 }
 
 /* ---------------- 实验参数：从场景实际元件取，取代写死的 6V / 200Ω ---------------- */
-const REQUIRED_SOURCE_V = 6 // 本实验要求把电源调到 6V
-const SOURCE_TOLERANCE_V = 0.2
+/** 电源电压要求来自实验配置（power），默认 6V ± 0.2V */
+const requiredSourceV = computed(() => experiment.value.power?.requiredSourceV ?? 6)
+const sourceTolerance = computed(() => experiment.value.power?.tolerance ?? 0.2)
 
 function readExperimentParams() {
   const comps = engine.value?.components || []
@@ -856,9 +859,9 @@ function recordData() {
     showToast(`接线不符合要求：${wiring.value?.message || '回路未闭合'}`, 'err')
     return
   }
-  if (Math.abs(sourceVoltage.value - REQUIRED_SOURCE_V) > SOURCE_TOLERANCE_V) {
+  if (Math.abs(sourceVoltage.value - requiredSourceV.value) > sourceTolerance.value) {
     showToast(
-      `电源电压 ${sourceVoltage.value.toFixed(2)}V 未调至 +${REQUIRED_SOURCE_V}V（±${SOURCE_TOLERANCE_V}V）`,
+      `电源电压 ${sourceVoltage.value.toFixed(2)}V 未调至 +${requiredSourceV.value}V（±${sourceTolerance.value}V）`,
       'err'
     )
     return
@@ -994,7 +997,9 @@ function showSchematic() {
       flowStep.value = 3
       engine.value?.setMode('wire')
       pushLog('[流程] 进入连线环节，已自动切换到导线模式')
-      showToast('请在 3D 场景中连接：电源+ → R1 → R2 → 电源−', 'ok')
+      // 提示文案来自实验配置，避免出现"本实验没有 R1 却提示连 R1"
+      const tip = c.flashTip
+      if (tip) showToast(`请在 3D 场景中连接：${tip}`, 'ok')
     },
     html: c.html,
   })
@@ -1039,8 +1044,11 @@ function submitReport() {
     score: score.value,
     stars,
     circuitOk: circuitOk.value,
-    voltOk: Math.abs(sourceVoltage.value - REQUIRED_SOURCE_V) <= SOURCE_TOLERANCE_V,
+    voltOk: Math.abs(sourceVoltage.value - requiredSourceV.value) <= sourceTolerance.value,
     srcVoltage: sourceVoltage.value,
+    requiredSourceV: requiredSourceV.value,
+    sourceTolerance: sourceTolerance.value,
+    requiredGroups: experiment.value.dataPoints.requiredGroups,
     records: records.value,
     wireCount: engine.value.wires.length,
     errors: errors.value,

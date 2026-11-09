@@ -56,11 +56,13 @@
             </div>
             <div class="chk" :class="report.voltOk ? 'ok' : 'bad'">
               <span class="ci">{{ report.voltOk ? '✓' : '✕' }}</span>
-              电源电压 {{ Number(report.srcVoltage || 0).toFixed(1) }}V（要求 +6V ±0.2V）
+              电源电压 {{ Number(report.srcVoltage || 0).toFixed(1) }}V（要求 +{{
+                report.requiredSourceV ?? 6
+              }}V ±{{ report.sourceTolerance ?? 0.2 }}V）
             </div>
-            <div class="chk" :class="report.records.length >= 3 ? 'ok' : 'bad'">
-              <span class="ci">{{ report.records.length >= 3 ? '✓' : '✕' }}</span>
-              数据记录 {{ report.records.length }} 组（要求 ≥ 3 组）
+            <div class="chk" :class="report.records.length >= (report.requiredGroups ?? 3) ? 'ok' : 'bad'">
+              <span class="ci">{{ report.records.length >= (report.requiredGroups ?? 3) ? '✓' : '✕' }}</span>
+              数据记录 {{ report.records.length }} 组（要求 ≥ {{ report.requiredGroups ?? 3 }} 组）
             </div>
           </div>
 

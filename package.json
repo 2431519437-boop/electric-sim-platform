@@ -19,9 +19,10 @@
     "test:grading": "node scripts/tests/grading.test.mjs",
     "test:records": "node scripts/tests/records.test.mjs",
     "test:analysis": "node scripts/tests/analysis.test.mjs",
+    "test:led": "node scripts/tests/led-experiment.test.mjs",
     "test:http": "node scripts/tests/records-http.test.mjs && node scripts/tests/analyze-http.test.mjs",
     "validate:grading": "node scripts/validate/grading-accuracy.mjs",
-    "check": "node scripts/check-core.mjs && node scripts/check-components.mjs && node scripts/check-graphmatch.mjs && node scripts/tests/grading.test.mjs && node scripts/tests/analysis.test.mjs && node scripts/validate/grading-accuracy.mjs"
+    "check": "node scripts/check-core.mjs && node scripts/check-components.mjs && node scripts/check-graphmatch.mjs && node scripts/tests/grading.test.mjs && node scripts/tests/analysis.test.mjs && node scripts/tests/led-experiment.test.mjs && node scripts/validate/grading-accuracy.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^7.6.9",

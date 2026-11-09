@@ -28,6 +28,7 @@ node scripts/e2e/wires.test.mjs    # 导线选中与单独删除
 node scripts/e2e/undo.test.mjs     # 删除导线后撤销
 node scripts/e2e/erase.test.mjs    # 三模式切换 + 删除灵敏度（屏幕空间拾取）
 node scripts/e2e/hint.test.mjs     # 「使用提示」按实验配置给文案
+node scripts/e2e/led.test.mjs      # 第三个实验（LED 限流）装载与数据表
 ```
 
 ## 说明

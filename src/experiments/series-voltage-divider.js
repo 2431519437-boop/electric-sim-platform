@@ -38,10 +38,17 @@ export const SPEC = {
     variableResistor: 'RHEO',
   },
 
+  /* 电源要求：数据记录前必须把电源调到这个电压附近 */
+  power: {
+    requiredSourceV: 6,
+    tolerance: 0.2,
+  },
+
   /* 仪表定义：用「角色」而不是具体元件类型，换元件时不用改这里 */
   measurements: {
     voltmeter: { acrossRole: 'variableResistor' },
     ammeter: { branchRole: 'variableResistor' },
+    labels: { volt: '并联在 R2 两端', amp: '串联在回路中' },
   },
 
   /* 理论值：params = { U0, R1, R2 }，由场景里实际元件参数提供 */
@@ -124,6 +131,7 @@ export const SPEC = {
       title: '🔧 实验电路图',
       subtitle: '串联回路：恒压源 → R1 → R2 → 回到电源（电压表并联在 R2 两端）',
       confirmText: '开始自主连线',
+      flashTip: '电源+ → R1 → R2 → 电源−',
       html: `
       <div style="text-align:center">
         <svg width="470" height="215" viewBox="0 0 470 215" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px">
