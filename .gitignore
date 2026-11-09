@@ -20,6 +20,7 @@ server/data/*.db-wal
 # 发布产物中的大二进制（文档仍进版本库）
 发布/*.apk
 发布/*.tar.gz
+发布/*.zip
 
 # 日志
 *.log

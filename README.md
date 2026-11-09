@@ -469,6 +469,47 @@ cd android && ./gradlew assembleDebug
 
 `deploy/` 目录提供 Dockerfile、Caddy 配置、健康检查与自动回滚脚本。
 
+### 7.5 纯静态演示站（GitHub Pages）
+
+给评审/老师一个**点开就能用**的网址，不需要装任何东西、也不需要后端。
+
+**为什么能纯静态跑**
+
+本作品的核心功能（3D 交互、并集拓扑识别、MNA 求解、图同构判分、分级判分、数据记录）全部在浏览器本地完成。
+没有后端时 `detectBackend()` 探测 `/api/health` 失败，前端自动回退到本地模式，
+记录写入 localStorage——功能完整，只是没有账号体系与教师端。
+
+**构建与本地预演**
+
+```bash
+npm run build
+npm run preview:static      # http://127.0.0.1:5200/esim/
+```
+
+`preview:static` 会**模拟 GitHub Pages 的项目站点形态**：把 `dist/` 挂在 `/esim/` 子路径下，
+并且和 Pages 一样对未知路径直接返回 404（不做 SPA 回退）。
+之所以要这样预演，是因为部署到 `https://<用户>.github.io/<仓库>/` 时所有资源都在子路径下，
+前缀写错会白屏，而本地 `vite preview` 是根路径，测不出这个问题。
+
+> `vite.config.js` 里 `base: './'` 用的是相对路径，所以站点放在任意子路径下都能用，
+> 不需要把仓库名写进配置。
+
+**自动发布**
+
+仓库里已带 `.github/workflows/deploy-pages.yml`：
+
+1. 在 GitHub 仓库页 `Settings → Pages → Source` 选 **GitHub Actions**
+2. push 到 `main` 即自动构建并发布
+3. 访问 `https://<用户名>.github.io/<仓库名>/`
+
+> 免费账号的 GitHub Pages 要求仓库为 **public**。若不想公开源码，
+> 可以只把 `dist/` 的内容推到另一个公开仓库（源码留在私有库）。
+
+**产物**
+
+`发布/电工电子实训-Web静态站.zip`（约 200 KB）内含 `index.html`、`assets/`、`.nojekyll`，
+解压到任意静态托管（校园服务器、Nginx、对象存储）即可访问，无需任何后端。
+
 ---
 
 ## 八、操作说明

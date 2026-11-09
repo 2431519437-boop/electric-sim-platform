@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview --port 4173",
+    "preview:static": "node scripts/preview-static.mjs",
     "server": "node server/index.js",
     "start": "npm run build && node server/index.js",
     "teacher": "node server/create-teacher.mjs",

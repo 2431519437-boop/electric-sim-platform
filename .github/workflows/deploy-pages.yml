@@ -1,0 +1,63 @@
+# 构建并把 dist/ 发布到 GitHub Pages
+# ------------------------------------------------------------
+# 前置（只需做一次，在仓库网页上）：
+#   Settings → Pages → Build and deployment → Source 选 "GitHub Actions"
+#
+# 之后每次 push 到 main 都会自动构建并发布，地址形如：
+#   https://<用户名>.github.io/<仓库名>/
+#
+# 说明：
+# - vite.config.js 里 base 是 './'（相对路径），所以站点放在任意子路径下都能用，
+#   不需要把仓库名写进配置。
+# - 本作品的后端（账号/记录/报告）在静态托管下不可用，前端会自动回退到本地模式；
+#   如需连接服务器，可在页面右上角 ⚙ 里填写后端地址。
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # 优先用 lockfile 精确安装；若 lockfile 与 package.json 不同步则退回 install
+      - name: Install
+        run: npm ci || npm install
+
+      - name: Build
+        run: npm run build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
