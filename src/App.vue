@@ -154,6 +154,7 @@ import { buildElectricalNodes, detectShortCircuit } from './circuit/unionFindTop
 import { generateNetlist, solveCircuit } from './circuit/circuitCore.js'
 import { evaluateWiring } from './circuit/graphMatch.js'
 import { computeReadings } from './circuit/readings.js'
+import { gradeTier, referenceResistorValue } from './circuit/tieredGrade.js'
 import AuthModal from './components/AuthModal.vue'
 import ServerModal from './components/ServerModal.vue'
 import {
@@ -266,6 +267,29 @@ const voltR2 = ref(0)
 const currentI = ref(0)
 const netlistText = ref('')
 const records = ref([])
+
+/** 分级判分结果：exact / valueOnly / equivalent / partial / wrong */
+const tierInfo = ref({ tier: 'wrong', factor: 1, label: '', reason: '', detail: '' })
+/** 最终分 = 扣分后的分数 × 档位系数 */
+const finalScore = computed(() =>
+  Math.max(0, Math.min(100, Math.round(score.value * (tierInfo.value.factor ?? 1))))
+)
+
+/**
+ * 分析完成后刷新分级结果。
+ * 不改变"是否正确"的判定，只在正确之外补上"错到什么程度"。
+ */
+function refreshTier(solutionOk) {
+  const info = gradeTier({
+    wiring: wiring.value,
+    spec: experiment.value,
+    params: readExperimentParams(),
+    readings: { u: voltR2.value, i: currentI.value },
+    solved: !!solutionOk,
+  })
+  tierInfo.value = info
+  pushLog(`[判分] ${info.label}（系数 ${info.factor}）：${info.detail}`, info.tier === 'exact' ? 'ok' : 'warn')
+}
 
 /* ---------------- 离线持久化（APP / 无后端时也能留住数据） ---------------- */
 // 按实验分 key 存储：切换实验不会把另一个实验的数据混进来
@@ -762,6 +786,8 @@ async function runAnalysis(silent = false) {
   )
   pushLog('━━━━ 分析完成 ━━━━', 'ok')
 
+  refreshTier(sol.ok)
+
   // 应用到 3D 场景（LED 点亮等）
   const solMap = new Map(sol.branchCurrents)
   engine.value.applySolution({ branchCurrents: solMap })
@@ -814,6 +840,8 @@ function applyRemoteAnalysis(res, silent) {
   )
   pushLog(`━━━━ 分析完成（后端，${res.elapsedMs} ms）━━━━`, 'ok')
 
+  refreshTier(!!a.solution?.ok)
+
   // 同步 3D 场景（LED 亮度等）
   engine.value.applySolution({
     branchCurrents: new Map(Object.entries(a.solution?.branchCurrents || {})),
@@ -856,8 +884,14 @@ function recordData() {
     return
   }
   if (!circuitOk.value) {
-    showToast(`接线不符合要求：${wiring.value?.message || '回路未闭合'}`, 'err')
-    return
+    // 分级判分下，等效电路 / 参数不符仍允许记录（否则"等效替代"的学生直接被卡死）
+    const tier = tierInfo.value.tier
+    const canRecord = tier === 'exact' || tier === 'valueOnly' || tier === 'equivalent'
+    if (!canRecord) {
+      showToast(`接线不符合要求：${wiring.value?.message || '回路未闭合'}`, 'err')
+      return
+    }
+    pushLog(`[记录] 接线被判为「${tierInfo.value.label}」，允许记录数据但会计入报告`, 'warn')
   }
   if (Math.abs(sourceVoltage.value - requiredSourceV.value) > sourceTolerance.value) {
     showToast(
@@ -879,8 +913,12 @@ function recordData() {
     showToast('当前 R2 阻值已记录，请调节电位器后再记录', 'err')
     return
   }
-  const uTheory = experiment.value.formulas.uTheory({ ...params, R2: r2v })
-  const iTheory = experiment.value.formulas.iTheory({ ...params, R2: r2v })
+  // 理论值按**标准答案**的固定电阻算，与分级判分同源：
+  // 否则同一份报告里"表格理论值"与"档位判定用的理论值"会互相矛盾
+  const refR1 = referenceResistorValue(experiment.value)
+  const theoryParams = refR1 != null ? { ...params, R1: refR1 } : params
+  const uTheory = experiment.value.formulas.uTheory({ ...theoryParams, R2: r2v })
+  const iTheory = experiment.value.formulas.iTheory({ ...theoryParams, R2: r2v })
 
   // 这一行的各列值由实验配置声明（dataPoints.read），不再写死 r2/u/i
   const row = experiment.value.dataPoints.read({
@@ -1039,11 +1077,20 @@ function submitReport() {
     showToast(`数据不足：已记录 ${records.value.length} 组，要求至少 3 组`, 'err')
     return
   }
-  const stars = score.value >= 90 ? 3 : score.value >= 75 ? 2 : 1
+  const rawScore = score.value
+  const final = finalScore.value
+  const stars = final >= 90 ? 3 : final >= 75 ? 2 : 1
   Object.assign(report, {
-    score: score.value,
+    score: final,
+    rawScore,
+    tier: tierInfo.value.tier,
+    tierLabel: tierInfo.value.label,
+    tierFactor: tierInfo.value.factor,
+    tierDetail: tierInfo.value.detail,
     stars,
     circuitOk: circuitOk.value,
+    /** 电路是否求解成功 —— 与"接线是否同构"是两件事，报告里分开显示 */
+    solvedOk: solved.value,
     voltOk: Math.abs(sourceVoltage.value - requiredSourceV.value) <= sourceTolerance.value,
     srcVoltage: sourceVoltage.value,
     requiredSourceV: requiredSourceV.value,

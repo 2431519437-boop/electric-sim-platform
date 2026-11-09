@@ -36,6 +36,14 @@
             <div class="score-info">
               <div class="stars">{{ stars }}</div>
               <div class="grade" :style="{ color: ringColor }">{{ report.grade }}</div>
+              <!-- 分级判分：系数不等于 1 时说明分数是怎么折算的 -->
+              <div v-if="Number(report.tierFactor ?? 1) !== 1" class="tier-line">
+                <span class="tier-tag">{{ report.tierLabel || report.tier }}</span>
+                原始 {{ report.rawScore }} 分 × 系数 {{ report.tierFactor }} = <b>{{ report.score }}</b> 分
+              </div>
+              <div v-else-if="report.tierLabel" class="tier-line">
+                <span class="tier-tag ok">{{ report.tierLabel }}</span>
+              </div>
               <div class="meta">
                 <span>用时 {{ report.timeText }}</span>
                 <span>失误 {{ report.errors }} 次</span>
@@ -46,13 +54,18 @@
 
           <!-- 检查项 -->
           <div class="checks">
-            <div class="chk" :class="report.circuitOk ? 'ok' : 'bad'">
-              <span class="ci">{{ report.circuitOk ? '✓' : '✕' }}</span>
-              回路闭合、方程求解成功
+            <div class="chk" :class="report.solvedOk ? 'ok' : 'bad'">
+              <span class="ci">{{ report.solvedOk ? '✓' : '✕' }}</span>
+              电路求解成功（MNA 方程有解、无短路）
             </div>
             <div class="chk" :class="report.wiringOk ? 'ok' : 'bad'">
               <span class="ci">{{ report.wiringOk ? '✓' : '✕' }}</span>
               接线拓扑等价性（图同构匹配）：{{ report.wiringText }}
+            </div>
+            <!-- 分级判分说明：即使拓扑不是完全一致，也说清为什么给到这一档 -->
+            <div v-if="report.tierDetail" class="chk tier" :class="report.wiringOk ? 'ok' : 'warn'">
+              <span class="ci">{{ report.wiringOk ? '✓' : '~' }}</span>
+              判分档位「{{ report.tierLabel }}」：{{ report.tierDetail }}
             </div>
             <div class="chk" :class="report.voltOk ? 'ok' : 'bad'">
               <span class="ci">{{ report.voltOk ? '✓' : '✕' }}</span>
@@ -122,6 +135,7 @@ const props = defineProps({
       score: 0,
       stars: 1,
       circuitOk: false,
+      solvedOk: false,
       voltOk: false,
       srcVoltage: 0,
       records: [],
@@ -132,6 +146,12 @@ const props = defineProps({
       netlistPreview: '',
       wiringOk: false,
       wiringText: '',
+      // 分级判分相关
+      rawScore: 0,
+      tier: '',
+      tierLabel: '',
+      tierFactor: 1,
+      tierDetail: '',
     }),
   },
 })
@@ -295,6 +315,31 @@ function errClass(r) {
   color: #64748b;
 }
 
+/* 分级判分：档位标签与折算说明 */
+.tier-line {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: #475569;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.tier-tag {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 5px;
+  color: #92400e;
+  background: #fef3c7;
+  border: 1px solid #fcd34d;
+}
+.tier-tag.ok {
+  color: #14532d;
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
 .checks {
   display: flex;
   flex-direction: column;
@@ -309,6 +354,20 @@ function errClass(r) {
   line-height: 1.6;
   padding: 7px 11px;
   border-radius: 8px;
+}
+/* 分级档位是"说明性"条目，弱化底色避免和硬性检查混在一起 */
+.chk.tier {
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  color: #475569;
+}
+.chk.tier.warn {
+  background: #fffbeb;
+  border-color: #fcd34d;
+  color: #78350f;
+}
+.chk.tier.warn .ci {
+  color: #b45309;
 }
 .chk .ci {
   width: 17px;

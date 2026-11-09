@@ -130,6 +130,8 @@ export function analyze(payload) {
       },
       wiring: {
         ok: !!wiring.ok,
+        // reason 是机器可读的判定原因，前端据此做分级判分
+        reason: wiring.reason || null,
         message: wiring.message,
         polarityReversed: !!wiring.polarityReversed,
         missing: wiring.missing || [],

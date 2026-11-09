@@ -18,6 +18,17 @@
  *   串联电路里 R1、R2 的物理位置可以互换，学生的孔位、导线走向更是千差万别，
  *   但电路功能完全一致。图同构判的是"电气结构等价"，这正是老师在评分时
  *   真正关心的东西。
+ *
+ * 为什么用 VF2 回溯，而不是 Weisfeiler-Lehman（颜色细化）等近似方法：
+ *   WL 只能给出**同构的必要条件**，不能判定同构 —— 两个 WL 签名完全相同的图
+ *   仍可能不同构（经典反例：C6 六边形与 2C3 两个三角形，都是 2-正则、6 顶点 6 边，
+ *   1-WL 的着色分布一致）。用 WL 做判分会把接错的电路判成对的。
+ *   本文件用「度数序列剪枝 + 回溯 + 顶点双射校验」，对课设规模（3~8 个顶点）是
+ *   **精确判定**，且带标签（类型 / 参数 / 方向）参与匹配。
+ *   该反例由 scripts/tests/isomorphism.test.mjs 固化为断言，任何人想改用 WL 都会被测出来。
+ *
+ * 注意：不能把"引脚顺序"当标签。电阻/电位器两端对称，反接在电气上等价 ——
+ *       只有电源、LED 这类有方向元件才比较方向（见 edgesCompatible）。
  */
 
 import { PIN } from './unionFindTopo.js'
@@ -312,8 +323,14 @@ export function evaluateWiring({
   const msg = { ...DEFAULT_MESSAGES, ...messages }
   const nameOf = (t) => typeNames[t] || TYPE_NAME[t] || t
   const graph = buildCircuitGraph({ components, nodeOf })
-  const fail = (message, extra = {}) => ({
+  /**
+   * 统一构造失败结果。
+   * reason 是**机器可读**的判定原因，供分级判分使用；message 是给人看的。
+   * 两者分开，避免上层去解析中文提示语做判断。
+   */
+  const fail = (reason, message, extra = {}) => ({
     ok: false,
+    reason,
     polarityReversed: false,
     message,
     missing: [],
@@ -324,7 +341,7 @@ export function evaluateWiring({
   })
 
   const sources = graph.edges.filter((e) => e.type === 'VSRC')
-  if (!sources.length) return fail(msg.noSource)
+  if (!sources.length) return fail('noSource', msg.noSource)
 
   // 从电源出发，取它在电气上真正连到的部分
   const live = connectedComponent(graph, sources[0].a)
@@ -336,6 +353,7 @@ export function evaluateWiring({
     if (has(t)) continue
     const label = nameOf(t)
     return fail(
+      'missingType',
       graph.edges.some((e) => e.type === t)
         ? `${label} 引脚未真正接入回路（可能存在悬空端）`
         : `回路中缺少${label}`,
@@ -362,6 +380,7 @@ export function evaluateWiring({
   if (matched) {
     return {
       ok: true,
+      reason: matchedIdx === 0 ? 'okMain' : 'okSwapped',
       polarityReversed: false,
       message: matchedIdx === 0 ? msg.okMain : msg.okSwapped,
       missing: [],
@@ -380,6 +399,7 @@ export function evaluateWiring({
   if (relaxed) {
     return {
       ok: false,
+      reason: 'polarity',
       polarityReversed: true,
       message: msg.polarity,
       missing: [],
@@ -396,6 +416,7 @@ export function evaluateWiring({
     .map((e) => TYPE_NAME[e.type] || e.type)
 
   let message
+  let reason
   let missing = []
 
   // 标准答案里串联电阻的期望值，用于"阻值不对"的提示（不再写死 200 / 40）
@@ -403,10 +424,13 @@ export function evaluateWiring({
 
   if (live.vertices.length < main.vertices.length) {
     // 元件两端都落在同一对节点上 → 并联而非串联
+    reason = 'parallelInsteadOfSeries'
     message = msg.parallelInsteadOfSeries
   } else if (extras.length) {
+    reason = 'extra'
     message = `${msg.extraPrefix}：${[...new Set(extras)].join('、')}${msg.extraSuffix}`
   } else if (liveEdges.length < main.edges.length) {
+    reason = 'missingEdges'
     message = msg.missingEdges(main.edges.length - liveEdges.length)
   } else {
     // 是否存在悬空端点（度数 < 2，说明有一端没接）
@@ -419,8 +443,11 @@ export function evaluateWiring({
     const valueOnly = variants.some((v) => matchGraphs(v, sub, { directed: false, ignoreValue: true }))
 
     if (hanging.length) {
+      reason = 'hanging'
       message = msg.hanging(hanging)
     } else if (valueOnly) {
+      // 结构（放开方向）能匹配，只是参数不符 —— 单独作为一类，供分级判分给部分分
+      reason = 'valueWrong'
       const refVal = Number(refRes?.value ?? 0)
       const refTol = Number(refRes?.tol ?? 0.2)
       // 阈值 = 标准阻值 × 容差（200Ω × 0.2 = 40Ω），与原实现保持一致
@@ -432,12 +459,14 @@ export function evaluateWiring({
         : []
       message = missing.length ? missing[0] : msg.paramWrong
     } else {
+      reason = 'structureMismatch'
       message = msg.structureMismatch
     }
   }
 
   return {
     ok: false,
+    reason,
     polarityReversed: false,
     message,
     missing,
