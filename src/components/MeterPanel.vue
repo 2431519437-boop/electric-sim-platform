@@ -18,6 +18,7 @@
       <div class="m-head">
         <span class="m-lab">电压表 <b>V</b></span>
         <span class="m-range">{{ voltLabel }}</span>
+        <span class="m-range short">{{ voltShort }}</span>
       </div>
       <div class="m-val">
         {{ hasSolution ? voltR2.toFixed(2) : '--.--' }}<em>V</em>
@@ -29,6 +30,7 @@
       <div class="m-head">
         <span class="m-lab">电流表 <b>A</b></span>
         <span class="m-range">{{ ampLabel }}</span>
+        <span class="m-range short">{{ ampShort }}</span>
       </div>
       <div class="m-val">
         {{ hasSolution ? (currentI * 1000).toFixed(2) : '--.--' }}<em>mA</em>
@@ -39,6 +41,7 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 const props = defineProps({
   hasSolution: { type: Boolean, default: false },
   voltR2: { type: Number, default: 0 },
@@ -50,6 +53,15 @@ const props = defineProps({
   voltLabel: { type: String, default: '并联在被测元件两端' },
   ampLabel: { type: String, default: '串联在回路中' },
 })
+
+/**
+ * 窄屏用的短标签：从完整说明里去掉"并联在 / 串联在"这类前缀。
+ * 手机面板只有 ~106px 宽，完整文案放不下，但也不能什么都不显示 ——
+ * 新手看到"电压表 V --.-- V"根本不知道测的是哪个元件。
+ */
+const shortOf = (text) => String(text || '').replace(/^(并联在|串联在)\s*/, '')
+const voltShort = computed(() => shortOf(props.voltLabel))
+const ampShort = computed(() => shortOf(props.ampLabel))
 
 function barPct(v, max) {
   const p = Math.min(Math.abs(Number(v) || 0) / max, 1) * 100
@@ -137,6 +149,10 @@ function barPct(v, max) {
   font-size: 9px;
   color: #55708e;
 }
+/* 短标签默认不显示，窄屏时切换过去 */
+.m-range.short {
+  display: none;
+}
 .m-val {
   font-family: 'Consolas', 'Courier New', monospace;
   font-size: 22px;
@@ -201,9 +217,15 @@ function barPct(v, max) {
   .m-lab {
     font-size: 10.5px;
   }
-  /* "并联在 R2 两端" 这类说明在小屏上换行反而更乱，直接收掉 */
+  /* 完整说明放不下，换成短标签（"并联在 R2 两端" → "R2 两端"）。
+     什么都不显示会让新手不知道电压表测的是哪个元件。 */
   .m-range {
     display: none;
+  }
+  .m-range.short {
+    display: inline;
+    font-size: 9px;
+    color: #6b87a6;
   }
   .m-val {
     font-size: 16px;

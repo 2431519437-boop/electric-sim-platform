@@ -126,43 +126,104 @@ export class SceneEngine {
   }
 
   /* ================= 视角取景 ================= */
-  /** 把整块面包板（含元件、双手）完整框进视野中央 */
+  /**
+   * 取景用的关键点：面包板四角 + 每个元件包围盒的 8 个角 + 两只手的包围盒。
+   * 用"真实几何点"而不是粗略包围盒，才能既装得下又尽量放大。
+   */
+  framingPoints() {
+    const pts = []
+    const s = boardSize()
+    const hw = s.width / 2
+    const hd = s.depth / 2
+    for (const x of [-hw, hw]) for (const z of [-hd, hd]) pts.push(new THREE.Vector3(x, 0, z))
+
+    const pushBox = (obj, shrink = 1) => {
+      if (!obj) return
+      const b = new THREE.Box3().setFromObject(obj)
+      if (!isFinite(b.min.x)) return
+      const c = b.getCenter(new THREE.Vector3())
+      const e = b.getSize(new THREE.Vector3()).multiplyScalar(0.5 * shrink)
+      for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) {
+        pts.push(new THREE.Vector3(c.x + sx * e.x, c.y + sy * e.y, c.z + sz * e.z))
+      }
+    }
+
+    for (const c of this.components) pushBox(c.group)
+    // 手是装饰件，允许被裁掉一点，不参与取景（否则会把相机推得很远）
+    if (this.board) pushBox(this.board)
+    return pts
+  }
+
+  /** 把整块面包板（含元件、双手）完整框进视野，并尽量占满屏幕 */
   frameBoard() {
-    const size = boardSize()
+    const aspect = this.camera.aspect || 1.5
+    const portrait = aspect < 0.95
 
-    // 竖屏（手机）时用更陡的俯角 + 更小的边距，让面包板在画面里占更大比例
-    const portrait = (this.camera.aspect || 1.5) < 0.95
-
-    // 取景包围盒：板面 + 元件高度 + 手部活动空间
-    // 竖屏时水平边距要收得更紧：手机宽度本来就窄，留太多空白会让板子显得很小
-    const halfW = size.width / 2 + (portrait ? 0.26 : 0.62) // 左右各留出一只手
-    const halfD = size.depth / 2 + (portrait ? 0.3 : 0.5) // 前后留出指尖与电源
-    const topY = portrait ? 1.05 : 1.25 // 元件（电源/电位器）最高处，并给上方留余量
-    // 注视点压在板心偏下方：整块板会被"顶"到画面偏上，避免贴着控制台被切
-    const center = new THREE.Vector3(0, portrait ? -0.3 : -0.45, 0)
-
-    const vFov = (this.camera.fov * Math.PI) / 180
-    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * this.camera.aspect)
-
-    // 相机俯角：竖屏更陡（~58°），横屏偏俯视（~43°）
+    // 竖屏更陡（能看清孔位），横屏偏俯视
     const dir = portrait ? new THREE.Vector3(0, 1.6, 1).normalize() : new THREE.Vector3(0, 0.92, 1).normalize()
-    const elev = Math.asin(dir.y)
+    const center = new THREE.Vector3(0, 0, 0)
+    const pts = this.framingPoints()
+    const LIMIT = 0.94 // 允许占到画面的 94%，留一点边
+    const tanV = Math.tan((this.camera.fov * Math.PI) / 360)
 
-    // 水平方向：板的宽度必须全部入画
-    const distH = halfW / Math.tan(hFov / 2)
-    // 垂直方向：板的进深在俯视时会投影成一定高度，加上元件高度
-    const projHalfV = halfD * Math.sin(elev) + topY * Math.cos(elev)
-    const distV = projHalfV / Math.tan(vFov / 2)
+    /** 把相机放到距离 d 处，返回内容在 NDC 上的上下左右极值 */
+    const measure = (d) => {
+      this.camera.position.copy(center).addScaledVector(dir, d)
+      this.camera.lookAt(center)
+      this.camera.updateMatrixWorld(true)
+      this.camera.updateProjectionMatrix()
+      let left = 0
+      let right = 0
+      let top = 0
+      let bottom = 0
+      const v = new THREE.Vector3()
+      for (const p of pts) {
+        v.copy(p).project(this.camera)
+        if (v.x < left) left = v.x
+        if (v.x > right) right = v.x
+        if (v.y < bottom) bottom = v.y
+        if (v.y > top) top = v.y
+      }
+      return { left, right, top, bottom }
+    }
 
-    const dist = Math.max(distH, distV, 2.6) * (portrait ? 1.04 : 1.12)
+    const worstOf = (m) => Math.max(m.right, -m.left, m.top, -m.bottom)
 
-    this.camera.position.copy(center).addScaledVector(dir, dist)
+    /** 二分：距离越大投影越小，找"刚好装下"的最小距离 */
+    const fitDistance = () => {
+      let lo = 0.6
+      let hi = 60
+      if (worstOf(measure(hi)) > LIMIT) return hi
+      for (let i = 0; i < 34; i++) {
+        const mid = (lo + hi) / 2
+        if (worstOf(measure(mid)) > LIMIT) lo = mid
+        else hi = mid
+      }
+      return hi
+    }
+
+    // 交替做两件事：① 求能装下的距离 ② 把内容在画面里垂直居中。
+    // 只做 ① 会浪费一半画面：电位器顶部很高，内容偏上时相机被迫拉远。
+    for (let iter = 0; iter < 3; iter++) {
+      const d = fitDistance()
+      const m = measure(d)
+      const cy = (m.top + m.bottom) / 2
+      if (Math.abs(cy) < 0.01) break
+      // NDC 偏移换算成世界高度，把注视点往上挪，内容就会往下走
+      center.y += cy * d * tanV
+    }
+
+    const dist = fitDistance()
+    measure(dist) // 用最终参数再摆一次相机
+
     this.controls.target.copy(center)
 
-    // 缩放范围锁在「整板入画」附近：最多再拉近 5%，避免镜头贴到元件脸上或被裁边
+    // 缩放范围：必须允许学生自己拉近看孔位。
+    // 早先限制成 dist×0.95（只能拉近 5%），手机横屏时板子本来就只有屏宽四成，
+    // 结果"看不清、点不准、也放不大"，所以下限放宽到 30%。
     this.fitDist = dist
-    this.controls.minDistance = dist * 0.95
-    this.controls.maxDistance = dist * 1.9
+    this.controls.minDistance = dist * 0.3
+    this.controls.maxDistance = dist * 2.4
 
     this.camera.updateProjectionMatrix()
     this.controls.update()

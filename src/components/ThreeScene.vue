@@ -353,24 +353,22 @@ defineExpose({ engine: () => engine, toggleMode })
   }
 }
 
-/* 真正的手机（<600px）：模式按钮只留图标，名字靠 title 与高亮色区分 */
+/* 真正的手机（<600px）：按钮缩小但**保留文字**。
+   只留图标会让"删除"变成一个垃圾桶，新手不知道点了会发生什么。 */
 @media (max-width: 600px) {
   .toolbar {
     gap: 5px;
   }
   .mode-btn {
-    padding: 8px 9px;
-    gap: 0;
-  }
-  .mode-btn .lbl {
-    display: none;
+    padding: 6px 7px;
+    gap: 3px;
+    font-size: 10.5px;
   }
   .mode-btn .ico {
-    font-size: 16px;
+    font-size: 13px;
   }
-  /* 手机上连线提示交给顶部 toast 与草稿条，这里只留一句短提示 */
   .hint {
-    max-width: 168px;
+    max-width: 190px;
     font-size: 10px;
   }
 }

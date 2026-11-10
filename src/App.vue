@@ -1045,7 +1045,17 @@ function showSchematic() {
 
 function openFlowStep(i) {
   if (i > flowStep.value) {
-    showToast('请按顺序完成前面的环节', 'err')
+    // 别只回一句"请按顺序完成前面的环节"——要说清差什么，学生才知道下一步做什么
+    const need = []
+    if (i >= 3 && !solved.value) need.push('完成接线并点「开始 / 重新计算」')
+    if (i >= 4 && records.value.length < experiment.value.dataPoints.requiredGroups) {
+      need.push(`记录至少 ${experiment.value.dataPoints.requiredGroups} 组数据`)
+    }
+    const stepName = experiment.value.steps?.[i] || '后面的环节'
+    showToast(
+      need.length ? `还不能进入「${stepName}」：请先${need.join('，再')}` : `请先完成前面的环节，再进入「${stepName}」`,
+      'err'
+    )
     return
   }
   if (i === 0) showPreview()

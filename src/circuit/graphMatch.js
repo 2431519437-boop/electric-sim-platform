@@ -79,6 +79,7 @@ export const TYPE_NAME = {
  */
 export const DEFAULT_MESSAGES = {
   noSource: '未检测到电源，请先放置恒压源',
+  sourceNotWired: '恒压源的引脚还没全部接入回路：请把它两端的引脚都连上导线',
   okMain: '接线与标准串联回路完全等价（图同构匹配成功）',
   okSwapped: '接线正确：R1 与 R2 的串联顺序与图纸相反，但电气完全等效',
   polarity: '接线拓扑正确，但电源极性接反（V+ 与 V- 对调）',
@@ -341,7 +342,14 @@ export function evaluateWiring({
   })
 
   const sources = graph.edges.filter((e) => e.type === 'VSRC')
-  if (!sources.length) return fail('noSource', msg.noSource)
+  if (!sources.length) {
+    // 区分两种情况：根本没放电源 vs 放了但引脚没全接上。
+    // 以前一律提示"未检测到电源，请先放置恒压源"，学生明明看到电源就在场景里，
+    // 会以为程序坏了 —— 这里必须说实话。
+    const hasSourceComp = (components || []).some((c) => c.type === 'VSRC')
+    if (hasSourceComp) return fail('sourceUnwired', msg.sourceNotWired)
+    return fail('noSource', msg.noSource)
+  }
 
   // 从电源出发，取它在电气上真正连到的部分
   const live = connectedComponent(graph, sources[0].a)
