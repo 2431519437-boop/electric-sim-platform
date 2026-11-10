@@ -471,7 +471,10 @@ cd android && ./gradlew assembleDebug
 
 ### 7.5 纯静态演示站（GitHub Pages）
 
+**在线演示：<https://2431519437-boop.github.io/electric-sim-platform/>**
+
 给评审/老师一个**点开就能用**的网址，不需要装任何东西、也不需要后端。
+（页面右上角显示「离线」是正常状态——静态托管下无后端，前端自动回退本地模式。）
 
 **为什么能纯静态跑**
 
