@@ -16,8 +16,9 @@ const BASE = (process.env.E2E_BASE || 'http://127.0.0.1:5199').replace(/\/+$/, '
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()
-const target = list.find((t) => t.type === 'page' && t.url.includes(':5199'))
-if (!target) { console.error('找不到页面（需要先在 5199 起开发服务器）'); process.exit(1) }
+// 取任意一个标签页，测试会自己导航到目标地址（既能测本地开发服务器，也能测线上站点）
+const target = list.find((t) => t.type === 'page')
+if (!target) { console.error('没有可用的浏览器标签页'); process.exit(1) }
 
 const ws = new WebSocket(target.webSocketDebuggerUrl)
 await new Promise((r) => ws.addEventListener('open', r))
