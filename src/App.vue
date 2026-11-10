@@ -30,7 +30,7 @@
       <button class="act-btn undo" :disabled="!canUndo" title="撤销上一步（Ctrl+Z）" @click="undo">
         ↶ 撤销
       </button>
-      <button class="act-btn" @click="runAnalysis">▶ 开始 / 重新计算</button>
+      <button class="act-btn calc-top" @click="runAnalysis">▶ 开始 / 重新计算</button>
       <button class="act-btn ghost" @click="resetAll">↺ 重置实验</button>
     </header>
 
@@ -64,6 +64,7 @@
           @wire-select="onWireSelect"
           @wire-remove="onWireRemove"
           @wire-erase="onWireErase"
+          @wire-miss="onWireMiss"
           @state-change="onStateChange"
           @log="pushLog"
         />
@@ -76,6 +77,13 @@
           :wiring-text="wiring?.message || ''"
           :volt-label="experiment.measurements.labels?.volt || '并联在被测元件两端'"
           :amp-label="experiment.measurements.labels?.amp || '串联在回路中'"
+          :variable-name="variableComp?.def?.name || ''"
+          :variable-value="Math.round(Number(variableComp?.state?.value) || 0)"
+          :variable-unit="variableComp?.def?.unit || ''"
+          :variable-min="variableRange?.min ?? null"
+          :variable-max="variableRange?.max ?? null"
+          :variable-step="variableRange?.step ?? 1"
+          @update:variable="onRheoInput"
         />
         <ConsolePanel :logs="logs" />
       </div>
@@ -617,6 +625,45 @@ function onWireErase(wire) {
   showToast(`已删除导线 ${id}，可点「撤销」恢复`, 'ok')
   recordChange()
   if (solved.value) runAnalysis(true)
+}
+
+/** 连线模式点了空白处：给肉眼可见的反馈，别只写进控制台 */
+function onWireMiss(kind) {
+  if (kind === 'cancelled') {
+    showToast('已取消当前连线', 'ok')
+    return
+  }
+  showToast('没点中元件引脚或面包板孔位，请点在引脚末端的小圆点上', 'warn')
+}
+
+/* ---------------- 可调电阻滑块（替代"开器件抽屉再拖参数"的绕路） ---------------- */
+const variableComp = computed(() => {
+  void stateTick.value // 依赖场景状态，元件增删后能重新算
+  const type = experiment.value.roles?.variableResistor
+  if (!type) return null
+  return engine.value?.components.find((c) => c.def.type === type) || null
+})
+
+const variableRange = computed(() => {
+  const c = variableComp.value
+  if (!c) return null
+  const min = Number(c.def.minValue ?? 0)
+  const max = Number(c.def.maxValue ?? 470)
+  const step = Number(c.def.step ?? (max <= 100 ? 1 : 10))
+  return { min, max, step }
+})
+
+let rheoTimer = null
+function onRheoInput(value) {
+  const c = variableComp.value
+  if (!c) return
+  engine.value?.setValueOf(c.id, value)
+  stateTick.value++
+  // 已经算过的话实时刷新读数；用防抖避免拖动时每帧都跑一次求解
+  if (solved.value) {
+    clearTimeout(rheoTimer)
+    rheoTimer = setTimeout(() => runAnalysis(true), 160)
+  }
 }
 
 function onStateChange() {
@@ -1286,6 +1333,41 @@ function resetAll() {
 .slide-enter-active, .slide-leave-active { transition: all 0.28s; }
 .slide-enter-from, .slide-leave-to { opacity: 0; transform: translateX(-50%) translateY(-14px); }
 
+/* 可调电阻快捷滑块：浮在画布左下角，避开右上角的仪表 */
+.rheo-panel {
+  position: absolute;
+  left: 12px;
+  bottom: 42px;
+  width: 232px;
+  padding: 7px 10px 9px;
+  border-radius: 10px;
+  background: rgba(9, 22, 39, 0.86);
+  border: 1px solid rgba(125, 211, 252, 0.22);
+  backdrop-filter: blur(6px);
+  z-index: 6;
+}
+.rp-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+.rp-name {
+  font-size: 11px;
+  color: #9dc0e6;
+}
+.rp-head b {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 13px;
+  color: #5bd0ff;
+}
+.rp-range {
+  width: 100%;
+  height: 18px;
+  accent-color: #38bdf8;
+  cursor: pointer;
+}
+
 /* 弹窗内部通用样式（v-html 内容） */
 .kp {
   background: #eef6ff;
@@ -1397,6 +1479,22 @@ function resetAll() {
 
   /* 控制台在手机上更矮 */
   .console .c-body { height: 96px; }
+
+  /* 手机上底部已有「▶ 计算」大按钮，顶栏这个去掉，避免同一功能两个入口 */
+  .act-btn.calc-top {
+    display: none;
+  }
+
+  /* 可调电阻滑块：手机宽度收窄，靠左下，避开中央的提示条 */
+  .rheo-panel {
+    width: 190px;
+    left: 8px;
+    bottom: 38px;
+    padding: 6px 9px 8px;
+  }
+  .rp-head {
+    margin-bottom: 3px;
+  }
 
   /* 手机上提示条移到下方：顶部空间要留给工具条（否则会盖住"删除"按钮） */
   .toast {

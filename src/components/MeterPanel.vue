@@ -4,8 +4,10 @@
       <span class="pill" :class="shorted ? 'err' : hasSolution ? 'ok' : 'idle'">
         {{ shorted ? '⚠ 短路' : hasSolution ? '● 已通电' : '○ 未计算' }}
       </span>
-      <span class="pill" :class="circuitOk ? 'ok' : 'idle'">
-        {{ circuitOk ? '回路闭合' : '回路断开' }}
+      <!-- 三态：还没接线 / 接了但不完整 / 闭合。
+           以前没通电时也显示"回路断开"，学生容易以为设备故障。 -->
+      <span class="pill" :class="circuitOk ? 'ok' : hasSolution ? 'warn' : 'idle'">
+        {{ hasSolution ? (circuitOk ? '回路闭合' : '接线不完整') : '未接线' }}
       </span>
     </div>
 
@@ -37,6 +39,22 @@
       </div>
       <div class="m-bar current"><i :style="{ width: barPct(currentI * 1000, 30) }"></i></div>
     </div>
+    <!-- 可调电阻快捷调节：和读数放在一起，学生调的时候本来就盯着这里 -->
+    <div v-if="variableMax !== null" class="meter variable">
+      <div class="m-head">
+        <span class="m-lab">{{ variableName }}</span>
+        <b class="m-set">{{ variableValue }}{{ variableUnit }}</b>
+      </div>
+      <input
+        class="m-slider"
+        type="range"
+        :min="variableMin ?? 0"
+        :max="variableMax"
+        :step="variableStep"
+        :value="variableValue"
+        @input="$emit('update:variable', Number($event.target.value))"
+      />
+    </div>
   </div>
 </template>
 
@@ -52,7 +70,16 @@ const props = defineProps({
   /** 仪表的说明文字由实验配置提供：不同实验测的对象不同 */
   voltLabel: { type: String, default: '并联在被测元件两端' },
   ampLabel: { type: String, default: '串联在回路中' },
+  /** 可调电阻（电位器）的快捷调节；没有这个元件时传 null 即不显示 */
+  variableName: { type: String, default: '' },
+  variableValue: { type: Number, default: 0 },
+  variableUnit: { type: String, default: '' },
+  variableMin: { type: Number, default: null },
+  variableMax: { type: Number, default: null },
+  variableStep: { type: Number, default: 1 },
 })
+
+defineEmits(['update:variable'])
 
 /**
  * 窄屏用的短标签：从完整说明里去掉"并联在 / 串联在"这类前缀。
@@ -107,6 +134,12 @@ function barPct(v, max) {
   background: rgba(153, 27, 27, 0.85);
   border-color: rgba(248, 113, 113, 0.5);
   animation: blink 1s infinite;
+}
+/* 已通电但接线不完整：橙色提醒，区别于"故障报警"的红色 */
+.pill.warn {
+  color: #fde68a;
+  background: rgba(146, 64, 14, 0.8);
+  border-color: rgba(251, 191, 36, 0.45);
 }
 .wiring-tip {
   font-size: 10.5px;
@@ -185,6 +218,23 @@ function barPct(v, max) {
 }
 .m-bar.current i {
   background: linear-gradient(90deg, #f59e0b, #fbbf24);
+}
+
+/* 可调电阻：贴在仪表下面，直接拖 */
+.meter.variable {
+  padding-bottom: 6px;
+}
+.m-set {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 13px;
+  color: #5bd0ff;
+}
+.m-slider {
+  width: 100%;
+  height: 16px;
+  margin-top: 2px;
+  accent-color: #38bdf8;
+  cursor: pointer;
 }
 
 /* 小屏压缩 */

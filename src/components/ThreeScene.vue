@@ -79,6 +79,7 @@ const emit = defineEmits([
   'wire-select',
   'wire-remove',
   'wire-erase',
+  'wire-miss',
   'state-change',
   'log',
 ])
@@ -169,6 +170,10 @@ onMounted(() => {
     onWireErase: (wire) => {
       // 删除模式下由外层完成删除（记录历史、重算），引擎不直接动手
       emit('wire-erase', wire)
+    },
+    onWireMiss: (kind) => {
+      // 点空白 / 取消连线时给肉眼可见的反馈（只写控制台学生在手机上看不到）
+      emit('wire-miss', kind)
     },
     onModeChange: (m) => {
       mode.value = m

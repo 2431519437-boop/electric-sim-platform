@@ -517,6 +517,15 @@ export class SceneEngine {
     this.holeMarker.visible = false
     g.add(this.holeMarker)
 
+    // 引脚高亮环：导线模式下对准的引脚会被套一个青色光环
+    this.pinMarker = new THREE.Mesh(
+      new THREE.TorusGeometry(0.055, 0.009, 10, 24),
+      new THREE.MeshBasicMaterial({ color: 0x38bdf8 })
+    )
+    this.pinMarker.rotation.x = -Math.PI / 2
+    this.pinMarker.visible = false
+    this.scene.add(this.pinMarker)
+
     this.board = g
     this.boardWorld = { x: 0, y: 0, z: 0 }
     this.scene.add(g)
@@ -838,6 +847,13 @@ export class SceneEngine {
     this._setPointer(e)
     this._updatePointerOnBoard()
 
+    // 连线模式：把高亮环套在"这一下会点到的端点"上，学生才知道要往哪点
+    if (this.mode === 'wire' && !this.dragging && !this.rotating) {
+      this._showEndpointMarker(this._pickEndpoint())
+      this.renderer.domElement.style.cursor = 'crosshair'
+      return
+    }
+
     // 旋转元件
     if (this.rotating) {
       const dx = e.clientX - this.rotateStart.x
@@ -943,9 +959,52 @@ export class SceneEngine {
     // 只有拖拽模式需要"选中导线"；连线/删除模式下点击语义不同，先清掉选中态
     if (mode !== 'drag') this.selectWire(null)
     if (this.holeMarker) this.holeMarker.visible = false
+    if (this.pinMarker) this.pinMarker.visible = false
     const label = mode === 'wire' ? '连线' : mode === 'erase' ? '删除' : '拖拽'
     this.hooks.onLog?.(`[模式] 切换到${label}模式`)
     this.hooks.onModeChange?.(mode)
+  }
+
+  /** 把高亮环摆到给定端点（引脚 / 孔位）上 */
+  _showEndpointMarker(ep) {
+    if (!this.pinMarker) return
+    if (!ep) {
+      this.pinMarker.visible = false
+      return
+    }
+    if (ep.kind === 'pin') {
+      const comp = this.components.find((c) => c.id === ep.compId)
+      const pin = comp?.def.pins.find((p) => p.name === ep.pin)
+      if (!comp || !pin) {
+        this.pinMarker.visible = false
+        return
+      }
+      const wp = pinWorldPosition(comp.group, pin)
+      this.pinMarker.position.set(wp.x, wp.y + 0.012, wp.z)
+      this.pinMarker.visible = true
+      this.holeMarker.visible = false
+    } else if (ep.kind === 'hole') {
+      // 孔位用原有的绿色环，避免两套高亮同时出现
+      this.pinMarker.visible = false
+      const h = this.holes.find((x) => x.id === ep.holeId)
+      if (h) {
+        this.holeMarker.position.set(h.x + this.boardWorld.x, -0.042, h.z + this.boardWorld.z)
+        this.holeMarker.visible = true
+      }
+    }
+  }
+
+  /** 连线模式下让引脚标记轻微呼吸，暗示"这里可以点" */
+  _pulsePinMarkers(t) {
+    const on = this.mode === 'wire'
+    for (const c of this.components) {
+      const list = c.pinMarkers || []
+      for (let i = 0; i < list.length; i++) {
+        list[i].visible = true
+        const s = on ? 1 + 0.45 * (0.5 + 0.5 * Math.sin(t * 4 + i * 1.1)) : 1
+        list[i].scale.setScalar(s)
+      }
+    }
   }
 
   /** 擦除模式：删除指定导线并返回它，供外层记录历史 */
@@ -955,16 +1014,40 @@ export class SceneEngine {
     return wire
   }
 
+  /**
+   * 设置某个元件的参数值（滑块控件用）。
+   * 与手动旋转电位器旋钮共用同一套状态，保证读数与外观一致。
+   */
+  setValueOf(compId, value) {
+    const comp = this.components.find((c) => c.id === compId)
+    if (!comp) return null
+    const def = comp.def
+    let v = Number(value)
+    if (!Number.isFinite(v)) return null
+    if (def.maxValue != null) v = Math.max(def.minValue ?? 0, Math.min(def.maxValue, v))
+    comp.state.value = v
+    // 电位器旋钮跟着转，避免"数值变了但旋钮没动"
+    const knob = comp.group.userData.knob
+    if (knob && def.maxValue) {
+      knob.rotation.y = ((def.maxValue - v) / def.maxValue) * Math.PI * 1.8
+    }
+    this.hooks.onLog?.(`[参数] ${def.name} 设为 ${v}${def.unit || ''}`)
+    return comp
+  }
+
   _handleWireClick() {
     const ep = this._pickEndpoint()
     if (!ep) {
-      // 点到空白处：取消已选的起点，避免一直挂着"半截连线"
+      // 点到空白处：取消已选的起点，避免一直挂着"半截连线"。
+      // 同时给一个肉眼可见的反馈 —— 光写进控制台，学生在手机上根本看不到。
       if (this.wireDraft) {
         this.wireDraft = null
         this.hooks.onWireDraft?.(null)
         this.hooks.onLog?.('[导线] 已取消当前连线')
+        this.hooks.onWireMiss?.('cancelled')
       } else {
         this.hooks.onLog?.('[导线] 未拾取到引脚或孔位')
+        this.hooks.onWireMiss?.('miss')
       }
       return
     }
@@ -1153,6 +1236,9 @@ export class SceneEngine {
 
     // 双手：操作手跟随鼠标 / 抓取元件，扶板手轻按其上
     this._updateHands(t, dt)
+
+    // 连线模式下引脚轻微呼吸，提示"这里可以点"
+    this._pulsePinMarkers(t)
 
     // LED 呼吸效果（通电时由外部设置 intensity）
     this.components.forEach((c) => {
