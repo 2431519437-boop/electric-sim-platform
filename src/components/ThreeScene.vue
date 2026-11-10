@@ -11,7 +11,7 @@
           title="拖动元件、点选导线"
           @click="setMode('drag')"
         >
-          <span class="ico">🖐</span>拖拽
+          <span class="ico">🖐</span><span class="lbl">拖拽</span>
         </button>
         <button
           class="mode-btn"
@@ -19,7 +19,7 @@
           title="依次点两个引脚/孔位连线"
           @click="setMode('wire')"
         >
-          <span class="ico">🔌</span>连线<em>W</em>
+          <span class="ico">🔌</span><span class="lbl">连线</span><em>W</em>
         </button>
         <button
           class="mode-btn danger"
@@ -27,7 +27,7 @@
           title="点导线直接删除"
           @click="setMode('erase')"
         >
-          <span class="ico">🗑</span>删除<em>E</em>
+          <span class="ico">🗑</span><span class="lbl">删除</span><em>E</em>
         </button>
       </div>
       <button class="home-btn" title="回到全景视角" @click="resetView">⌂ 全景</button>
@@ -314,6 +314,65 @@ defineExpose({ engine: () => engine, toggleMode })
 }
 .hint b {
   color: #7dd3fc;
+}
+
+/* ================= 窄屏 / 手机：工具条瘦身，避免压住仪表 ================= */
+/* 手机竖屏只有 ~412px，工具条 300px + 仪表 186px 会直接重叠，
+   导致"删除"按钮被仪表盖住点不到。这里把工具条压到 ~150px 以内。 */
+@media (max-width: 900px), (pointer: coarse) and (max-width: 1100px) {
+  .toolbar {
+    top: 8px;
+    left: 8px;
+    gap: 6px;
+  }
+  /* 版本行与长提示在小屏上纯属占地方 */
+  .ver {
+    display: none;
+  }
+  .hint {
+    max-width: 210px;
+    font-size: 10.5px;
+    line-height: 1.5;
+    padding: 4px 8px;
+  }
+  .modes {
+    gap: 2px;
+    padding: 3px;
+  }
+  .mode-btn {
+    gap: 4px;
+    padding: 7px 8px;
+    font-size: 11.5px;
+  }
+  .mode-btn em {
+    display: none;
+  }
+  .home-btn {
+    font-size: 10.5px;
+    padding: 3px 8px;
+  }
+}
+
+/* 真正的手机（<600px）：模式按钮只留图标，名字靠 title 与高亮色区分 */
+@media (max-width: 600px) {
+  .toolbar {
+    gap: 5px;
+  }
+  .mode-btn {
+    padding: 8px 9px;
+    gap: 0;
+  }
+  .mode-btn .lbl {
+    display: none;
+  }
+  .mode-btn .ico {
+    font-size: 16px;
+  }
+  /* 手机上连线提示交给顶部 toast 与草稿条，这里只留一句短提示 */
+  .hint {
+    max-width: 168px;
+    font-size: 10px;
+  }
 }
 
 .draft {

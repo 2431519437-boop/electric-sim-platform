@@ -134,8 +134,9 @@ export class SceneEngine {
     const portrait = (this.camera.aspect || 1.5) < 0.95
 
     // 取景包围盒：板面 + 元件高度 + 手部活动空间
-    const halfW = size.width / 2 + (portrait ? 0.42 : 0.62) // 左右各留出一只手
-    const halfD = size.depth / 2 + (portrait ? 0.38 : 0.5) // 前后留出指尖与电源
+    // 竖屏时水平边距要收得更紧：手机宽度本来就窄，留太多空白会让板子显得很小
+    const halfW = size.width / 2 + (portrait ? 0.26 : 0.62) // 左右各留出一只手
+    const halfD = size.depth / 2 + (portrait ? 0.3 : 0.5) // 前后留出指尖与电源
     const topY = portrait ? 1.05 : 1.25 // 元件（电源/电位器）最高处，并给上方留余量
     // 注视点压在板心偏下方：整块板会被"顶"到画面偏上，避免贴着控制台被切
     const center = new THREE.Vector3(0, portrait ? -0.3 : -0.45, 0)

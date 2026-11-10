@@ -1387,5 +1387,19 @@ function resetAll() {
 
   /* 控制台在手机上更矮 */
   .console .c-body { height: 96px; }
+
+  /* 手机上提示条移到下方：顶部空间要留给工具条（否则会盖住"删除"按钮） */
+  .toast {
+    top: auto;
+    bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    max-width: 88vw;
+    text-align: center;
+    font-size: 12px;
+    padding: 8px 14px;
+  }
+  .slide-enter-from, .slide-leave-to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
+  }
 }
 </style>

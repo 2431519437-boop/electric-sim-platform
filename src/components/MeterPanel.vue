@@ -177,4 +177,56 @@ function barPct(v, max) {
   .meter { padding: 6px 8px; }
   .m-val { font-size: 17px; }
 }
+
+/* 手机竖屏：仪表缩成窄条，把左侧空间让给工具条
+   412px 宽时 工具条(~150) + 仪表(108) + 边距 才不会重叠 */
+@media (max-width: 900px), (pointer: coarse) and (max-width: 1100px) {
+  .meters {
+    width: 132px;
+    top: 8px;
+    right: 8px;
+    gap: 5px;
+  }
+  .status {
+    flex-wrap: wrap;
+    gap: 3px;
+  }
+  .pill {
+    font-size: 9.5px;
+    padding: 2px 6px;
+  }
+  .meter {
+    padding: 5px 7px;
+  }
+  .m-lab {
+    font-size: 10.5px;
+  }
+  /* "并联在 R2 两端" 这类说明在小屏上换行反而更乱，直接收掉 */
+  .m-range {
+    display: none;
+  }
+  .m-val {
+    font-size: 16px;
+  }
+  .m-bar {
+    height: 3px;
+    margin-top: 4px;
+  }
+}
+
+@media (max-width: 600px) {
+  .meters {
+    width: 106px;
+  }
+  .pill {
+    font-size: 9px;
+    padding: 1px 5px;
+  }
+  .meter {
+    padding: 4px 6px;
+  }
+  .m-val {
+    font-size: 15px;
+  }
+}
 </style>
