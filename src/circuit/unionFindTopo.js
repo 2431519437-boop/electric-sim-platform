@@ -156,24 +156,50 @@ function endpointToElement(ep) {
 }
 
 /**
- * 短路检测：电源两端若落在同一电气节点，即为短路。
+ * 短路检测：任意元件两端若落在同一电气节点，即被短接（电源正负极短路最危险）。
+ *
+ * 短路分类：
+ *   - kind: 'source'  电源正负极短路（最危险，可能烧电源/导线）
+ *   - kind: 'element' 普通元件两端被导线/铜条短接（该元件在电路中失效）
+ *
  * @param {Object} nodeResult buildElectricalNodes 的返回值
- * @param {Array} sources 电源元件列表 [{ compId, posPin, negPin }]
- * @returns {Array} 短路描述
+ * @param {Array} sources 电源元件列表 [{ compId, posPin, negPin }]（可选，向后兼容）
+ * @param {Array} [components] 全部元件列表（含 id/type/pins），用于检测普通元件短接
+ * @returns {Array} 短路描述 [{ compId, kind, node, message }]
  */
-export function detectShortCircuit(nodeResult, sources = []) {
+export function detectShortCircuit(nodeResult, sources = [], components = []) {
   const { nodeOf } = nodeResult
   const shorts = []
+
+  // 1) 电源正负极短路（危险）
   for (const src of sources) {
     const nPos = nodeOf.get(PIN(src.compId, src.posPin))
     const nNeg = nodeOf.get(PIN(src.compId, src.negPin))
     if (nPos && nNeg && nPos === nNeg) {
       shorts.push({
         compId: src.compId,
+        kind: 'source',
         node: nPos,
         message: `电源 ${src.compId} 的正负极处于同一电气节点（${nPos}），发生短路`,
       })
     }
   }
+
+  // 2) 普通元件两端被短接（可选，传入 components 时启用）
+  for (const c of components) {
+    if (c.type === 'WIRE' || c.type === 'VSRC') continue
+    if (!c.pins || c.pins.length < 2) continue
+    const n1 = nodeOf.get(PIN(c.id, c.pins[0].name))
+    const n2 = nodeOf.get(PIN(c.id, c.pins[1].name))
+    if (n1 && n2 && n1 === n2) {
+      shorts.push({
+        compId: c.id,
+        kind: 'element',
+        node: n1,
+        message: `元件 ${c.name || c.id} 两端处于同一电气节点（${n1}），被导线短接`,
+      })
+    }
+  }
+
   return shorts
 }

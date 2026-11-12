@@ -13,6 +13,7 @@ import { buildElectricalNodes, detectShortCircuit } from '../src/circuit/unionFi
 import { generateNetlist, solveCircuit } from '../src/circuit/circuitCore.js'
 import { evaluateWiring } from '../src/circuit/graphMatch.js'
 import { computeReadings } from '../src/circuit/readings.js'
+import { diagnose } from '../src/circuit/diagnose.js'
 import { getExperiment, DEFAULT_EXPERIMENT_ID } from '../src/experiments/index.js'
 import { computeFingerprint, ALGO_VERSION } from '../src/circuit/fingerprint.js'
 
@@ -64,7 +65,7 @@ export function analyze(payload) {
   const topo = buildElectricalNodes({ boards, placements, wires })
   const { nodes, nodeOf } = topo
 
-  // 2) 短路检测：电源正负极若落在同一节点即短路
+  // 2) 短路检测：电源正负极短路 + 任意元件被导线短接
   const sources = components
     .filter((c) => c.type === 'VSRC')
     .map((c) => ({
@@ -72,7 +73,7 @@ export function analyze(payload) {
       posPin: c.pins?.[0]?.name,
       negPin: c.pins?.[1]?.name,
     }))
-  const shorts = detectShortCircuit(topo, sources)
+  const shorts = detectShortCircuit(topo, sources, components)
 
   // 3) 网表生成
   const netlist = generateNetlist({ nodes, components, nodeOf })
@@ -101,6 +102,18 @@ export function analyze(payload) {
   // 6) 仪表读数：测哪个元件由配置的 measurements 决定（不再固定取 RHEO）
   const meters = computeReadings({ spec, components, nodeOf, solution: sol })
   const readings = { u: meters.u, i: meters.i }
+
+  // 6.5) 诊断式判分：不止判对错，还定位"错在哪、为什么、怎么改"
+  const params = { U0: source?.value ?? 0 }
+  const diagnostics = diagnose({
+    components,
+    nodeOf,
+    solution: sol,
+    wiring,
+    spec,
+    readings,
+    params,
+  })
 
   // 7) 判分可信审计链：生成可验证指纹（拓扑规范形 + 算法版本 + 结论）
   //    教师端据此验证「分数与电路一致、算法版本一致、争议可追溯」。
@@ -138,6 +151,9 @@ export function analyze(payload) {
         nodeVoltages: mapToObject(sol.nodeVoltages),
         branchCurrents: mapToObject(sol.branchCurrents),
         groundNode: sol.groundNode ?? null,
+        conditionNumber: sol.conditionNumber ?? null,
+        illConditioned: !!sol.illConditioned,
+        numericWarning: sol.numericWarning ?? null,
       },
       wiring: {
         ok: !!wiring.ok,
@@ -153,6 +169,7 @@ export function analyze(payload) {
         algoVersion: ALGO_VERSION,
       },
       readings,
+      diagnostics,
       sourceCompId: source?.id ?? null,
       // 便于排查：这次用的是哪份实验配置、测的是哪个元件
       experimentKey: spec.id,

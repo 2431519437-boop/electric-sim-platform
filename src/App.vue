@@ -164,6 +164,7 @@ import { evaluateWiring } from './circuit/graphMatch.js'
 import { computeReadings } from './circuit/readings.js'
 import { gradeTier, referenceResistorValue } from './circuit/tieredGrade.js'
 import { checkWiringProcedure, checkSafety } from './circuit/procedure.js'
+import { diagnose } from './circuit/diagnose.js'
 import { trySnap } from './circuit/pinResolver.js'
 import AuthModal from './components/AuthModal.vue'
 import ServerModal from './components/ServerModal.vue'
@@ -279,6 +280,8 @@ const voltR2 = ref(0)
 const currentI = ref(0)
 const netlistText = ref('')
 const records = ref([])
+/** 诊断结论（结构化，从"判对错"到"当助教"） */
+const diagnostics = ref({ ok: true, items: [], errorCount: 0, warnCount: 0, infoCount: 0, summary: '' })
 
 /** 分级判分结果：exact / valueOnly / equivalent / partial / wrong */
 const tierInfo = ref({ tier: 'wrong', factor: 1, label: '', reason: '', detail: '' })
@@ -531,6 +534,7 @@ function applyExperiment(spec, { log = true } = {}) {
   solved.value = false
   circuitOk.value = false
   shorts.value = []
+  diagnostics.value = { ok: true, items: [], errorCount: 0, warnCount: 0, infoCount: 0, summary: '' }
   voltR2.value = 0
   currentI.value = 0
   netlistText.value = ''
@@ -819,7 +823,7 @@ async function runAnalysis(silent = false) {
   const sources = state.components
     .filter((c) => c.type === 'VSRC')
     .map((c) => ({ compId: c.id, posPin: c.pins[0].name, negPin: c.pins[1].name }))
-  shorts.value = detectShortCircuit(topo, sources)
+  shorts.value = detectShortCircuit(topo, sources, state.components)
   if (shorts.value.length) {
     shorts.value.forEach((s) => pushLog(`[短路] ${s.message}`, 'err'))
     if (!silent) {
@@ -914,6 +918,28 @@ async function runAnalysis(silent = false) {
     }
   }
 
+  // 8) 诊断式判分：不止判"对不对"，还定位"错在哪、为什么、怎么改"
+  diagnostics.value = diagnose({
+    components: state.components,
+    nodeOf: topo.nodeOf,
+    solution: sol,
+    wiring: wiringResult,
+    spec: experiment.value,
+    readings: { u: voltR2.value, i: currentI.value },
+    params: { U0: primarySource?.value ?? 0 },
+  })
+  if (diagnostics.value.items.length) {
+    diagnostics.value.items.forEach((d) => {
+      const tag = d.severity === 'error' ? '诊断' : d.severity === 'warn' ? '提示' : '信息'
+      pushLog(`[${tag}] ${d.title}：${d.detail}`, d.severity === 'error' ? 'err' : 'warn')
+    })
+  }
+
+  // 数值稳定性：病态方程组警告
+  if (sol.numericWarning) {
+    pushLog(`[数值] ${sol.numericWarning}`, 'warn')
+  }
+
   pushLog('━━━━ 分析完成 ━━━━', 'ok')
 
   refreshTier(sol.ok)
@@ -961,6 +987,25 @@ function applyRemoteAnalysis(res, silent) {
   wiring.value = { ...(a.wiring || {}) }
   circuitOk.value = !!a.wiring?.ok
   pushLog(`[拓扑] ${a.wiring?.message || '未判定'}`, circuitOk.value ? 'ok' : 'err')
+
+  // 诊断结论（后端返回的结构化诊断）
+  diagnostics.value = a.diagnostics || {
+    ok: true,
+    items: [],
+    errorCount: 0,
+    warnCount: 0,
+    infoCount: 0,
+    summary: '',
+  }
+  ;(diagnostics.value.items || []).forEach((d) => {
+    const tag = d.severity === 'error' ? '诊断' : d.severity === 'warn' ? '提示' : '信息'
+    pushLog(`[${tag}] ${d.title}：${d.detail}`, d.severity === 'error' ? 'err' : 'warn')
+  })
+
+  // 数值稳定性警告
+  if (a.solution?.numericWarning) {
+    pushLog(`[数值] ${a.solution.numericWarning}`, 'warn')
+  }
 
   voltR2.value = a.readings?.u ?? 0
   currentI.value = a.readings?.i ?? 0
@@ -1245,6 +1290,8 @@ function submitReport() {
     netlistPreview: netlistText.value.split('\n').slice(0, 12).join('\n'),
     wiringOk: !!wiring.value?.ok,
     wiringText: wiring.value?.message || '未进行拓扑判定',
+    // 诊断结论（结构化，供报告展示与教师端学情归因）
+    diagnostics: diagnostics.value,
     // 判分审计链：随报告入库，教师端可验证
     fingerprint: wiring.value?.fingerprint ?? null,
     experimentKey: experiment.value.id,

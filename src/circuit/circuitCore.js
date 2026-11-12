@@ -65,37 +65,116 @@ export function generateNetlist({ nodes, components, nodeOf }) {
    2. 直流电路求解（改进节点电压法 MNA）
 ================================================================ */
 
-/** 高斯消元求解 Ax = b（部分主元） */
+/**
+ * 矩阵 ∞-范数：所有行中「绝对值之和」的最大值。
+ * 用于条件数估计（cond∞(A) = ‖A‖∞ · ‖A⁻¹‖∞）。
+ */
+function infinityNorm(M) {
+  let max = 0
+  for (const row of M) {
+    let s = 0
+    for (const v of row) s += Math.abs(v)
+    if (s > max) max = s
+  }
+  return max
+}
+
+/**
+ * 估算矩阵的条件数（基于 ∞-范数）。
+ * 直接求逆 O(n³) 成本偏高，这里用「主元绝对值的最小值」做快速下界估计：
+ * 条件数下界 ≈ ‖A‖∞ / min|pivot|。主元过小 → 矩阵近奇异 → 结果不可信。
+ * 对课设规模（≤ 十几阶）够用，且比求逆廉价。
+ *
+ * @returns {{ conditionNumber: number, illConditioned: boolean }}
+ */
+function estimateCondition(A, pivotMagnitudes) {
+  const norm = infinityNorm(A)
+  const minPivot = pivotMagnitudes.length ? Math.min(...pivotMagnitudes) : 0
+  // 主元为零 → 奇异；主元远小于范数 → 病态
+  const cond = minPivot > 0 ? norm / minPivot : Infinity
+  // 经验阈值：条件数 > 1e8 视为病态（双精度浮点约 15~16 位有效数字，留足余量）
+  return { conditionNumber: cond, illConditioned: cond > 1e8 }
+}
+
+/**
+ * 高斯消元求解 Ax = b（全主元选择 + 条件数诊断）。
+ *
+ * 相比教科书里的部分主元（只按列选），全主元（行列同时选）对
+ * "几乎奇异"的矩阵（例如两个超大电阻并联导致的病态方程组）更稳健。
+ * 返回的不再是裸数组，而是 { x, conditionNumber, illConditioned }。
+ */
 function gaussianSolve(A, b) {
   const n = A.length
-  if (n === 0) return []
+  if (n === 0) return { x: [], conditionNumber: 0, illConditioned: false }
+
+  // 增广矩阵副本（消元过程会改动，保留原始 A 用于条件数估计）
+  const Aorig = A.map((row) => [...row])
   const M = A.map((row, i) => [...row, b[i]])
+  const pivotMagnitudes = []
 
-  for (let col = 0; col < n; col++) {
-    // 选主元
-    let pivot = col
-    for (let r = col + 1; r < n; r++) {
-      if (Math.abs(M[r][col]) > Math.abs(M[pivot][col])) pivot = r
+  // 行/列置换映射（全主元需记录列交换，回代时还原）
+  const colMap = Array.from({ length: n }, (_, i) => i)
+
+  for (let k = 0; k < n; k++) {
+    // 全主元：在剩余子矩阵 [k..n) × [k..n) 中找绝对值最大的元素
+    let pr = k
+    let pc = k
+    let maxAbs = Math.abs(M[k][k])
+    for (let r = k; r < n; r++) {
+      for (let c = k; c < n; c++) {
+        const v = Math.abs(M[r][c])
+        if (v > maxAbs) {
+          maxAbs = v
+          pr = r
+          pc = c
+        }
+      }
     }
-    if (Math.abs(M[pivot][col]) < 1e-12) continue // 该列全零，跳过
-    ;[M[col], M[pivot]] = [M[pivot], M[col]]
 
-    // 归一化
-    const pv = M[col][col]
-    for (let c = col; c <= n; c++) M[col][c] /= pv
+    if (maxAbs < 1e-12) {
+      // 剩余子矩阵全零 → 奇异（或几乎奇异），记录后跳出
+      pivotMagnitudes.push(0)
+      break
+    }
+    pivotMagnitudes.push(maxAbs)
 
-    // 消元
+    // 交换行
+    if (pr !== k) {
+      const tmp = M[pr]
+      M[pr] = M[k]
+      M[k] = tmp
+    }
+    // 交换列（同时更新列映射）
+    if (pc !== k) {
+      for (let r = 0; r < n; r++) {
+        const t = M[r][k]
+        M[r][k] = M[r][pc]
+        M[r][pc] = t
+      }
+      const tc = colMap[k]
+      colMap[k] = colMap[pc]
+      colMap[pc] = tc
+    }
+
+    // 归一化主元行
+    const pv = M[k][k]
+    for (let c = k; c <= n; c++) M[k][c] /= pv
+
+    // 消去其他行
     for (let r = 0; r < n; r++) {
-      if (r === col) continue
-      const factor = M[r][col]
+      if (r === k) continue
+      const factor = M[r][k]
       if (factor === 0) continue
-      for (let c = col; c <= n; c++) M[r][c] -= factor * M[col][c]
+      for (let c = k; c <= n; c++) M[r][c] -= factor * M[k][c]
     }
   }
 
+  // 回代：x[colMap[i]] = M[i][n]
   const x = new Array(n).fill(0)
-  for (let i = 0; i < n; i++) x[i] = M[i][n]
-  return x
+  for (let i = 0; i < n; i++) x[colMap[i]] = M[i][n]
+
+  const { conditionNumber, illConditioned } = estimateCondition(Aorig, pivotMagnitudes)
+  return { x, conditionNumber, illConditioned }
 }
 
 /**
@@ -108,16 +187,30 @@ export function solveCircuit({ nodes, components, nodeOf, sourceCompId }) {
   const branchCurrents = new Map()
 
   // 找出所有用到的节点
-  const activeNodes = []
-  const nodeIndex = new Map()
+  const allActive = []
   for (const n of nodes) {
     if (n.elements.length === 0) continue
-    nodeIndex.set(n.id, activeNodes.length)
-    activeNodes.push(n.id)
+    allActive.push(n.id)
   }
 
   // 电压源支路（需要额外未知量）
   const vsources = components.filter((c) => c.type === 'VSRC' && c.pins.length >= 2)
+
+  /* 参考地：选择与电源负极相连的节点为 0V 参考（必须先在 activeNodes 之外确定，
+     否则地节点会在矩阵里留一个全零行，导致方程组奇异） */
+  let groundNode = null
+  const primarySource = vsources.find((v) => v.id === sourceCompId) || vsources[0]
+  if (primarySource) {
+    const negPin = primarySource.pins.find((p) => p.role === 'neg') || primarySource.pins[1]
+    groundNode = nodeOf.get(PIN(primarySource.id, negPin.name)) || null
+  }
+  if (!groundNode && allActive.length) groundNode = allActive[allActive.length - 1]
+
+  // 地节点不参与求解（电压恒为 0），从未知量里剔除
+  const activeNodes = allActive.filter((id) => id !== groundNode)
+  const nodeIndex = new Map()
+  activeNodes.forEach((id, i) => nodeIndex.set(id, i))
+
   const nNode = activeNodes.length
   const size = nNode + vsources.length
 
@@ -127,15 +220,6 @@ export function solveCircuit({ nodes, components, nodeOf, sourceCompId }) {
 
   const A = Array.from({ length: size }, () => new Array(size).fill(0))
   const b = new Array(size).fill(0)
-
-  /* 参考地：选择与电源负极相连的节点为 0V 参考 */
-  let groundNode = null
-  const primarySource = vsources.find((v) => v.id === sourceCompId) || vsources[0]
-  if (primarySource) {
-    const negPin = primarySource.pins.find((p) => p.role === 'neg') || primarySource.pins[1]
-    groundNode = nodeOf.get(PIN(primarySource.id, negPin.name)) || null
-  }
-  if (!groundNode && activeNodes.length) groundNode = activeNodes[activeNodes.length - 1]
 
   /** 把节点电压未知量映射到矩阵行；地返回特殊标记 */
   const rowOfNode = (nodeId) => {
@@ -208,13 +292,18 @@ export function solveCircuit({ nodes, components, nodeOf, sourceCompId }) {
   })
 
   /* ---- 求解 ---- */
-  const x = gaussianSolve(A, b)
+  const { x, conditionNumber, illConditioned } = gaussianSolve(A, b)
   if (!x.length) {
     return { ok: false, nodeVoltages, branchCurrents, message: '方程组无解或电路不完整' }
   }
 
   activeNodes.forEach((nid, i) => nodeVoltages.set(nid, x[i]))
   if (groundNode) nodeVoltages.set(groundNode, 0)
+
+  // 病态警告：条件数过大说明结果数值不可信（如超大电阻并联、近似奇异拓扑）
+  const numericWarning = illConditioned
+    ? `矩阵条件数约 ${conditionNumber.toExponential(2)}，方程组病态，数值结果可能不可靠`
+    : null
 
   /* ---- 计算支路电流 ---- */
   for (const [id, info] of branchOfRes) {
@@ -234,7 +323,16 @@ export function solveCircuit({ nodes, components, nodeOf, sourceCompId }) {
     branchCurrents.set(src.id, x[src.__row] ?? 0)
   }
 
-  return { ok: true, nodeVoltages, branchCurrents, groundNode, netlistSize: size }
+  return {
+    ok: true,
+    nodeVoltages,
+    branchCurrents,
+    groundNode,
+    netlistSize: size,
+    conditionNumber,
+    illConditioned,
+    numericWarning,
+  }
 }
 
 /* ================================================================

@@ -79,6 +79,25 @@
             </div>
           </div>
 
+          <!-- 诊断结论：不止判对错，还定位"错在哪、为什么、怎么改" -->
+          <template v-if="report.diagnostics && report.diagnostics.items && report.diagnostics.items.length">
+            <div class="sec-title warn-title">🔍 接线诊断（问题定位与修改建议）</div>
+            <div class="diag-list">
+              <div
+                v-for="(d, i) in report.diagnostics.items"
+                :key="i"
+                class="diag-item"
+                :class="d.severity"
+              >
+                <span class="diag-sev">{{ d.severity === 'error' ? '✕' : d.severity === 'warn' ? '!' : 'ℹ' }}</span>
+                <div class="diag-body">
+                  <div class="diag-title">{{ d.title }}</div>
+                  <div class="diag-detail">{{ d.detail }}</div>
+                </div>
+              </div>
+            </div>
+          </template>
+
           <!-- 操作规程违规记录（接线工艺训练类实验） -->
           <div v-if="report.procedureViolations && report.procedureViolations.length" class="sec-title warn-title">
             操作规程违规记录（带电操作）
@@ -161,6 +180,7 @@ const props = defineProps({
       wiringOk: false,
       wiringText: '',
       procedureViolations: [],
+      diagnostics: { ok: true, items: [], errorCount: 0, warnCount: 0, infoCount: 0, summary: '' },
       // 分级判分相关
       rawScore: 0,
       tier: '',
@@ -451,6 +471,73 @@ function errClass(r) {
 .proc-msg {
   color: #7f1d1d;
   line-height: 1.5;
+  margin-top: 2px;
+}
+
+/* 诊断结论列表 */
+.diag-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.diag-item {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 9px 11px;
+  border-radius: 8px;
+  font-size: 11.5px;
+  border: 1px solid transparent;
+}
+.diag-item.error {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+.diag-item.error .diag-title {
+  color: #991b1b;
+}
+.diag-item.warn {
+  background: #fffbeb;
+  border-color: #fcd34d;
+}
+.diag-item.warn .diag-title {
+  color: #92400e;
+}
+.diag-item.info {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+.diag-item.info .diag-title {
+  color: #1e40af;
+}
+.diag-sev {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 11px;
+  color: #fff;
+  margin-top: 1px;
+}
+.diag-item.error .diag-sev {
+  background: #dc2626;
+}
+.diag-item.warn .diag-sev {
+  background: #f59e0b;
+}
+.diag-item.info .diag-sev {
+  background: #3b82f6;
+}
+.diag-title {
+  font-weight: 700;
+  line-height: 1.4;
+}
+.diag-detail {
+  color: #475569;
+  line-height: 1.65;
   margin-top: 2px;
 }
 
