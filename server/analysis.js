@@ -13,6 +13,7 @@ import { buildElectricalNodes, detectShortCircuit } from '../src/circuit/unionFi
 import { generateNetlist, solveCircuit } from '../src/circuit/circuitCore.js'
 import { solveAC } from '../src/circuit/acSolver.js'
 import { solveTransient } from '../src/circuit/transientSolver.js'
+import { solveNonlinearDC, hasNonlinearElements } from '../src/circuit/nonlinearSolver.js'
 import { evaluateWiring } from '../src/circuit/graphMatch.js'
 import { computeReadings } from '../src/circuit/readings.js'
 import { diagnose } from '../src/circuit/diagnose.js'
@@ -108,6 +109,14 @@ export function analyze(payload) {
     transientResult = solveTransient({ nodes, components, nodeOf })
   }
 
+  // 非线性（含 LED 二极管时）：Newton-Raphson + Shockley 模型求解，
+  // 输出比「分段线性简化模型」更精确的二极管工作点（指数伏安特性）。
+  // 作为增强结果并入 solution，不改动 sol.branchCurrents（保证判分零回归）。
+  let nonlinearResult = null
+  if (hasNonlinearElements(components)) {
+    nonlinearResult = solveNonlinearDC({ nodes, components, nodeOf })
+  }
+
   // 5) 接线拓扑判定（带标签多重图的子图同构匹配）—— 标准答案来自实验配置
   const wiring = evaluateWiring({
     components,
@@ -173,6 +182,25 @@ export function analyze(payload) {
         conditionNumber: sol.conditionNumber ?? null,
         illConditioned: !!sol.illConditioned,
         numericWarning: sol.numericWarning ?? null,
+        // 非线性求解增强结果（仅当电路含 LED 时存在）
+        nonlinear: nonlinearResult
+          ? {
+              ok: nonlinearResult.ok,
+              converged: nonlinearResult.converged,
+              iterations: nonlinearResult.iterations,
+              model: 'Shockley + Newton-Raphson',
+              diodeOperatingPoints: Object.fromEntries(
+                [...nonlinearResult.diodeOperatingPoints].map(([k, v]) => [
+                  k,
+                  { vd: v.vd, id: v.id, gd: v.gd },
+                ])
+              ),
+              ledCurrents: Object.fromEntries(
+                [...nonlinearResult.diodeOperatingPoints].map(([k, v]) => [k, v.id])
+              ),
+              message: nonlinearResult.message ?? null,
+            }
+          : null,
       },
       wiring: {
         ok: !!wiring.ok,
