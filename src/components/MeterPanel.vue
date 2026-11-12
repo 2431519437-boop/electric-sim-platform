@@ -16,6 +16,14 @@
       {{ wiringText }}
     </div>
 
+    <!-- 最小修正建议：不止判"错"，还精确告诉"改哪几个元件即可复原" -->
+    <div v-if="hasSolution && !circuitOk && correction && correction.suggestions && correction.suggestions.length" class="correction-tip">
+      <div class="ct-title">💡 改这 {{ correction.distance }} 处即可复原：</div>
+      <div v-for="(s, i) in correction.suggestions" :key="i" class="ct-item">
+        <span class="ct-num">{{ i + 1 }}</span>{{ s.detail }}
+      </div>
+    </div>
+
     <div class="meter">
       <div class="m-head">
         <span class="m-lab">电压表 <b>V</b></span>
@@ -67,6 +75,8 @@ const props = defineProps({
   shorted: { type: Boolean, default: false },
   circuitOk: { type: Boolean, default: false },
   wiringText: { type: String, default: '' },
+  /** 最小修正建议：{ distance, suggestions: [{ kind, target, from, to, detail }] }，null 表示无建议 */
+  correction: { type: Object, default: null },
   /** 仪表的说明文字由实验配置提供：不同实验测的对象不同 */
   voltLabel: { type: String, default: '并联在被测元件两端' },
   ampLabel: { type: String, default: '串联在回路中' },
@@ -149,6 +159,39 @@ function barPct(v, max) {
   border: 1px solid rgba(251, 191, 36, 0.42);
   border-radius: 8px;
   padding: 5px 8px;
+}
+/* 最小修正建议：青绿色高亮，强调"可操作"（区别于红色错误、橙色警告） */
+.correction-tip {
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: #a5f3fc;
+  background: rgba(8, 51, 68, 0.82);
+  border: 1px solid rgba(34, 211, 238, 0.45);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.ct-title {
+  font-weight: 600;
+  margin-bottom: 3px;
+  color: #67e8f9;
+}
+.ct-item {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding-left: 2px;
+}
+.ct-num {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  line-height: 14px;
+  text-align: center;
+  font-size: 9px;
+  font-weight: 700;
+  color: #083344;
+  background: #22d3ee;
+  border-radius: 50%;
 }
 @keyframes blink {
   50% {

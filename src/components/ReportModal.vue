@@ -98,6 +98,32 @@
             </div>
           </template>
 
+          <!-- 最小修正建议：A* 精确定位"错在哪几个元件、最少改几处、怎么改" -->
+          <template v-if="report.correction && report.correction.suggestions && report.correction.suggestions.length">
+            <div class="sec-title corr-title">🎯 最小修正建议（改这几处即可复原）</div>
+            <div class="corr-box">
+              <div class="corr-head">
+                仅需修改 <b>{{ report.correction.distance }}</b> 处即可复原标准电路
+                <span class="corr-alg" title="A* 精确最小图编辑距离，非近似">
+                  已精确求解（展开 {{ report.correction.explored ?? '-' }} 个状态）
+                </span>
+              </div>
+              <div class="corr-list">
+                <div
+                  v-for="(s, i) in report.correction.suggestions"
+                  :key="i"
+                  class="corr-item"
+                  :class="s.kind"
+                >
+                  <span class="corr-icon">{{
+                    s.kind === 'delete' ? '✂ 移除' : s.kind === 'insert' ? '＋ 补接' : '⇄ 替换'
+                  }}</span>
+                  <span class="corr-detail">{{ s.detail }}</span>
+                </div>
+              </div>
+            </div>
+          </template>
+
           <!-- 操作规程违规记录（接线工艺训练类实验） -->
           <div v-if="report.procedureViolations && report.procedureViolations.length" class="sec-title warn-title">
             操作规程违规记录（带电操作）
@@ -202,6 +228,7 @@ const props = defineProps({
       wiringOk: false,
       wiringText: '',
       procedureViolations: [],
+      correction: null,
       diagnostics: { ok: true, items: [], errorCount: 0, warnCount: 0, infoCount: 0, summary: '' },
       craftGrade: { ok: true, items: [], totalPenalty: 0, errorCount: 0, warnCount: 0, infoCount: 0, summary: '' },
       // 分级判分相关
@@ -466,6 +493,71 @@ function errClass(r) {
 .warn-title {
   color: #9a3412;
   border-left-color: #dc2626;
+}
+
+/* 最小修正建议：青绿色主题，强调"可操作的最优解" */
+.corr-title {
+  color: #0e7490;
+  border-left-color: #06b6d4;
+}
+.corr-box {
+  background: #ecfeff;
+  border: 1px solid #a5f3fc;
+  border-radius: 9px;
+  padding: 10px 12px;
+}
+.corr-head {
+  font-size: 11.5px;
+  color: #155e75;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.corr-head b {
+  font-size: 16px;
+  color: #0e7490;
+  font-variant-numeric: tabular-nums;
+}
+.corr-alg {
+  font-size: 10px;
+  color: #64748b;
+  margin-left: auto;
+}
+.corr-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.corr-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11.5px;
+  color: #164e63;
+  line-height: 1.5;
+}
+.corr-icon {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 5px;
+  color: #fff;
+  white-space: nowrap;
+}
+.corr-item.delete .corr-icon {
+  background: #f59e0b;
+}
+.corr-item.insert .corr-icon {
+  background: #10b981;
+}
+.corr-item.substitute .corr-icon {
+  background: #6366f1;
+}
+.corr-detail {
+  color: #0c4a6e;
 }
 
 .proc-list {

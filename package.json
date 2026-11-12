@@ -34,11 +34,12 @@
     "test:nonlinear": "node scripts/tests/nonlinear-solver.test.mjs",
     "test:audit": "node scripts/tests/audit-idempotency.test.mjs",
     "test:trace": "node scripts/tests/trace.test.mjs",
+    "test:edit": "node scripts/tests/edit-distance.test.mjs",
     "bench:nonlinear": "node scripts/benchmark-nonlinear.mjs",
     "bench:arch": "node scripts/benchmark-architecture.mjs",
     "test:http": "node scripts/tests/records-http.test.mjs && node scripts/tests/analyze-http.test.mjs",
     "validate:grading": "node scripts/validate/grading-accuracy.mjs",
-    "check": "node scripts/check-core.mjs && node scripts/check-components.mjs && node scripts/check-graphmatch.mjs && node scripts/tests/grading.test.mjs && node scripts/tests/analysis.test.mjs && node scripts/tests/led-experiment.test.mjs && node scripts/tests/isomorphism.test.mjs && node scripts/tests/tiered-grade.test.mjs && node scripts/tests/wiring-craft.test.mjs && node scripts/tests/craft-grade.test.mjs && node scripts/tests/fault-diagnosis.test.mjs && node scripts/tests/fingerprint.test.mjs && node scripts/tests/insights.test.mjs && node scripts/tests/diagnose.test.mjs && node scripts/tests/numeric-stability.test.mjs && node scripts/tests/ac-transient.test.mjs && node scripts/tests/nonlinear-solver.test.mjs && node scripts/tests/audit-idempotency.test.mjs && node scripts/tests/trace.test.mjs && node scripts/validate/grading-accuracy.mjs"
+    "check": "node scripts/check-core.mjs && node scripts/check-components.mjs && node scripts/check-graphmatch.mjs && node scripts/tests/grading.test.mjs && node scripts/tests/analysis.test.mjs && node scripts/tests/led-experiment.test.mjs && node scripts/tests/isomorphism.test.mjs && node scripts/tests/tiered-grade.test.mjs && node scripts/tests/wiring-craft.test.mjs && node scripts/tests/craft-grade.test.mjs && node scripts/tests/fault-diagnosis.test.mjs && node scripts/tests/fingerprint.test.mjs && node scripts/tests/insights.test.mjs && node scripts/tests/diagnose.test.mjs && node scripts/tests/numeric-stability.test.mjs && node scripts/tests/ac-transient.test.mjs && node scripts/tests/nonlinear-solver.test.mjs && node scripts/tests/audit-idempotency.test.mjs && node scripts/tests/trace.test.mjs && node scripts/tests/edit-distance.test.mjs && node scripts/validate/grading-accuracy.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^7.6.9",

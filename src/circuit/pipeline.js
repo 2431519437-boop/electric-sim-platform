@@ -36,6 +36,7 @@ import { evaluateWiring } from './graphMatch.js'
 import { computeReadings } from './readings.js'
 import { diagnose } from './diagnose.js'
 import { gradeTier } from './tieredGrade.js'
+import { minimumEditAcross } from './editDistance.js'
 
 const isObj = (v) => v !== null && typeof v === 'object'
 const asArray = (v) => (Array.isArray(v) ? v : [])
@@ -133,6 +134,18 @@ export function analyzeCircuit({
     messages: spec.grading.messages,
   })
 
+  // 5.5) 最小修正建议（核心算法创新：A* 精确最小图编辑距离）
+  //       接线判定回答「对不对」，这里回答「错在哪几个元件、最少改几处、怎么改」。
+  //       仅在接线未通过时计算（已正确则距离为 0，无需建议）。
+  let correction = null
+  if (!wiring.ok && spec.grading?.referenceCircuits?.length) {
+    correction = minimumEditAcross({
+      components: comps,
+      nodeOf,
+      references: spec.grading.referenceCircuits,
+    })
+  }
+
   // 6) 仪表读数
   const meters = computeReadings({ spec, components: comps, nodeOf, solution: sol })
   const readings = { u: meters.u, i: meters.i }
@@ -220,6 +233,15 @@ export function analyzeCircuit({
       liveEdgeCount: wiring.liveEdgeCount ?? 0,
       fingerprint,
     },
+    correction: correction
+      ? {
+          distance: correction.distance,
+          corrected: correction.corrected,
+          suggestions: correction.suggestions || [],
+          explored: correction.explored,
+          variantIndex: correction.variantIndex,
+        }
+      : null,
     readings,
     diagnostics,
     tier,

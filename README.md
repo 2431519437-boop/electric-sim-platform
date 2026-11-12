@@ -245,6 +245,30 @@ LED 极性接反                     25/25  100.0%
 > 实现：`src/circuit/tieredGrade.js`（纯函数，前后端共用）
 > 测试：`scripts/tests/tiered-grade.test.mjs`（39 项，含真实求解器验算）
 
+### 创新点 5：接线错误的最小修正建议 ★（算法创新）
+
+图同构判定回答"对不对"，诊断回答"错在哪个类型"，但真实教学里老师最有价值的一句反馈是：
+
+> **"你这堆线里是 R2 这个电位器接错了位置，把它从 X 孔拔下来插到 Y 孔就对了。"**
+
+这就是 Multisim / LTspice / TinkerCAD **都没有**、而本平台**首创**的第三层判分——**精确定位到元件、给出最少改几处、怎么改**。
+
+它本质上是一个**带标签多重图上的最小图编辑距离（Graph Edit Distance）**问题，一般情形 NP-hard。
+本平台利用"标准答案图 ≤ 8 顶点、≤ 6 边 + 边带强标签"的领域结构，用 **A\* 搜索 + 可采纳启发**求得**精确最优解**（而非近似）：
+
+| 编辑操作 | 代价 | 对应物理动作 |
+|---|---|---|
+| 删（delete） | 1 | 拆掉多接的元件 |
+| 增（insert） | 1 | 补接漏接的元件 |
+| 改（substitute） | 1 | 换掉放错类型的元件 |
+
+关键洞察：**图同构判定（`matchGraphs ≠ null`）恰好等价于"编辑距离 = 0"**。
+本模块把判分从"布尔分类"升级为"带度量的距离"，从而能回答"差几步、差在哪、怎么改"。
+
+> 实现：`src/circuit/editDistance.js`（`minimumEditSet`，A\* 精确求解）
+> 测试：`scripts/tests/edit-distance.test.mjs`（22 断言，距离值与手工枚举一致）
+> 文档：`docs/算法创新-最小修正建议.md`（含可采纳性证明、复杂度分析）
+
 ---
 
 ## 三、系统架构
@@ -545,6 +569,7 @@ electric-sim-platform/
 │   │   ├── unionFindTopo.js     # 并查集拓扑识别（创新点 1）
 │   │   ├── circuitCore.js       # 网表生成 + MNA 求解（创新点 2）
 │   │   ├── graphMatch.js        # 图同构接线判定（创新点 3）
+│   │   ├── editDistance.js      # 最小修正建议 A* 图编辑距离（创新点 5）
 │   │   ├── readings.js          # 仪表读数（前后端共用）
 │   │   ├── tieredGrade.js       # 分级判分（五档 + 等效电路识别）
 │   │   └── componentLibrary.js  # 元件几何与电气参数

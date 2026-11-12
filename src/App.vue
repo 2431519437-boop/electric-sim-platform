@@ -77,6 +77,7 @@
           :shorted="!!shorts.length"
           :circuit-ok="circuitOk"
           :wiring-text="wiring?.message || ''"
+          :correction="correction"
           :volt-label="experiment.measurements.labels?.volt || '并联在被测元件两端'"
           :amp-label="experiment.measurements.labels?.amp || '串联在回路中'"
           :variable-name="variableComp?.def?.name || ''"
@@ -169,6 +170,7 @@ import { computeReadings } from './circuit/readings.js'
 import { gradeTier, referenceResistorValue } from './circuit/tieredGrade.js'
 import { checkWiringProcedure, checkSafety } from './circuit/procedure.js'
 import { diagnose } from './circuit/diagnose.js'
+import { minimumEditAcross } from './circuit/editDistance.js'
 import { gradeCraft } from './circuit/craftGrade.js'
 import { trySnap } from './circuit/pinResolver.js'
 import AuthModal from './components/AuthModal.vue'
@@ -349,6 +351,8 @@ watch(
 )
 /** 图同构接线判定结果 */
 const wiring = ref(null)
+/** 最小修正建议（核心算法创新：A* 精确最小图编辑距离，定位"错在哪几个元件、最少改几处"） */
+const correction = ref(null)
 
 /* engine 是普通类实例（shallowRef 不深度代理），
    元件参数改变时手动 +1 触发依赖刷新 */
@@ -553,6 +557,7 @@ function applyExperiment(spec, { log = true } = {}) {
   currentI.value = 0
   netlistText.value = ''
   wiring.value = null
+  correction.value = null
   selectedComp.value = null
   selectedWire.value = null
   logs.value = []
@@ -992,6 +997,24 @@ async function runAnalysis(silent = false) {
   wiring.value = wiringResult
   circuitOk.value = wiringResult.ok
   pushLog(`[拓扑] ${wiringResult.message}`, wiringResult.ok ? 'ok' : 'err')
+  // 最小修正建议：接线未通过时，用 A* 求「最少改几处、怎么改」的精确建议
+  if (!wiringResult.ok && experiment.value.grading?.referenceCircuits?.length) {
+    correction.value = minimumEditAcross({
+      components: state.components,
+      nodeOf: topo.nodeOf,
+      references: experiment.value.grading.referenceCircuits,
+    })
+    if (correction.value?.suggestions?.length) {
+      pushLog(
+        `[修正] 最少改 ${correction.value.distance} 处即可复原标准电路：${correction.value.suggestions
+          .map((s) => s.detail)
+          .join('；')}`,
+        'warn'
+      )
+    }
+  } else {
+    correction.value = null
+  }
   if (wiringResult.extra.length) {
     pushLog(`[拓扑] 未接入回路的元件（不影响判定）：${wiringResult.extra.join('、')}`)
   }
@@ -1096,6 +1119,17 @@ function applyRemoteAnalysis(res, silent) {
   wiring.value = { ...(a.wiring || {}) }
   circuitOk.value = !!a.wiring?.ok
   pushLog(`[拓扑] ${a.wiring?.message || '未判定'}`, circuitOk.value ? 'ok' : 'err')
+
+  // 最小修正建议（后端 pipeline 已算好，直接落到状态）
+  correction.value = a.correction || null
+  if (correction.value?.suggestions?.length) {
+    pushLog(
+      `[修正] 最少改 ${correction.value.distance} 处即可复原标准电路：${correction.value.suggestions
+        .map((s) => s.detail)
+        .join('；')}`,
+      'warn'
+    )
+  }
 
   // 诊断结论（后端返回的结构化诊断）
   diagnostics.value = a.diagnostics || {
@@ -1402,6 +1436,8 @@ function submitReport() {
     netlistPreview: netlistText.value.split('\n').slice(0, 12).join('\n'),
     wiringOk: !!wiring.value?.ok,
     wiringText: wiring.value?.message || '未进行拓扑判定',
+    // 最小修正建议（定位"错在哪几个元件、最少改几处、怎么改"）
+    correction: correction.value,
     // 诊断结论（结构化，供报告展示与教师端学情归因）
     diagnostics: diagnostics.value,
     // 判分审计链：随报告入库，教师端可验证

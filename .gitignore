@@ -13,6 +13,9 @@ dist-ssr/
 .verify/
 .backup/
 
+# 项目工作日志（WorkBuddy 本地记忆，不进入版本库）
+.workbuddy/
+
 # 实验数据（本地 SQLite，含 WAL/SHM）
 server/data/*.db
 server/data/*.db-shm
