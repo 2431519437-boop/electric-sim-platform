@@ -16,6 +16,7 @@ import {
   stats,
   listAllReports,
   insights,
+  traceReport,
 } from './db.js'
 
 /* ---------------- 实验记录 ---------------- */
@@ -70,4 +71,9 @@ export function overview() {
 /** 学情分析：教师端洞察（错误聚类 / 档位分布 / 完成率 / 审计覆盖） */
 export function insightsView() {
   return insights()
+}
+
+/** 判分追溯：给定报告 id，还原「这个分数怎么算出来的」完整推理链 */
+export function traceView(reportId) {
+  return traceReport(reportId)
 }

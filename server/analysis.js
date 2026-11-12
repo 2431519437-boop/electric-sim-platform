@@ -1,22 +1,20 @@
 /**
  * analysis.js —— 电路分析服务层
  * ------------------------------------------------------------
- * 直接复用前端 src/circuit 下的算法模块（它们不依赖 three.js）：
- *   unionFindTopo.js  并查集拓扑识别 + 短路检测
- *   circuitCore.js    网表生成 + 改进节点电压法求解
- *   graphMatch.js     接线拓扑的图同构判定
+ * 判分核心收敛到 src/circuit/pipeline.js 的 analyzeCircuit()，
+ * 这是一条「拓扑→求解→诊断→评分→审计」的统一流水线，前端离线与
+ * 后端在线跑的是同一份源码（前后端同源），结果必然一致。
  *
- * 因此后端与前端的计算结果完全一致（同一份源码，不是两套实现）。
+ * 本文件只做三件「服务层专属」的事：
+ *   1. 输入校验（validatePayload）
+ *   2. 拓扑识别（buildElectricalNodes，把 boards/placements/wires 解析成节点）
+ *   3. 审计指纹（computeFingerprint，依赖 node:crypto，仅后端可做）
+ * 其余判分逻辑全部走 pipeline，不再重复实现。
  */
 
-import { buildElectricalNodes, detectShortCircuit } from '../src/circuit/unionFindTopo.js'
-import { generateNetlist, solveCircuit } from '../src/circuit/circuitCore.js'
-import { solveAC } from '../src/circuit/acSolver.js'
-import { solveTransient } from '../src/circuit/transientSolver.js'
-import { solveNonlinearDC, hasNonlinearElements } from '../src/circuit/nonlinearSolver.js'
-import { evaluateWiring } from '../src/circuit/graphMatch.js'
-import { computeReadings } from '../src/circuit/readings.js'
-import { diagnose } from '../src/circuit/diagnose.js'
+import { buildElectricalNodes } from '../src/circuit/unionFindTopo.js'
+import { analyzeCircuit } from '../src/circuit/pipeline.js'
+import { buildTrace } from '../src/circuit/trace.js'
 import { getExperiment, DEFAULT_EXPERIMENT_ID } from '../src/experiments/index.js'
 import { computeFingerprint, ALGO_VERSION } from '../src/circuit/fingerprint.js'
 
@@ -42,15 +40,8 @@ export function validatePayload(payload) {
   return null
 }
 
-/** 把 Map 转成普通对象，便于 JSON 输出 */
-function mapToObject(m) {
-  if (!m) return {}
-  if (m instanceof Map) return Object.fromEntries(m)
-  return isObj(m) ? { ...m } : {}
-}
-
 /**
- * 执行一次完整分析，等价于前端 App.vue 里的 runAnalysis()
+ * 执行一次完整分析（统一走 pipeline 判分流水线）。
  * @param {object} payload { boards, placements, wires, components, sourceCompId?, experimentKey? }
  */
 export function analyze(payload) {
@@ -66,201 +57,34 @@ export function analyze(payload) {
 
   // 1) 并查集拓扑识别：孔位 + 引脚 + 导线 → 电气节点
   const topo = buildElectricalNodes({ boards, placements, wires })
-  const { nodes, nodeOf } = topo
 
-  // 2) 短路检测：电源正负极短路 + 任意元件被导线短接
-  const sources = components
-    .filter((c) => c.type === 'VSRC')
-    .map((c) => ({
-      compId: c.id,
-      posPin: c.pins?.[0]?.name,
-      negPin: c.pins?.[1]?.name,
-    }))
-  const shorts = detectShortCircuit(topo, sources, components)
-
-  // 3) 网表生成
-  const netlist = generateNetlist({ nodes, components, nodeOf })
-
-  // 4) 电路求解（MNA + 高斯消元）
-  //    检测储能元件/交流源：含电容/电感 → 可做瞬态；含交流源 → 相量稳态。
-  //    纯电阻直流电路仍走原直流求解器，保证判分零回归。
+  // 电源：显式指定优先，否则自动探测
   const source = payload.sourceCompId
     ? components.find((c) => c.id === payload.sourceCompId)
     : components.find((c) => c.type === 'VSRC') || components.find((c) => c.type === 'ACVSRC')
-  const hasStorage = components.some((c) => c.type === 'CAP' || c.type === 'IND')
-  const hasACSource = components.some((c) => c.type === 'ACVSRC')
 
-  const sol = solveCircuit({
-    nodes,
-    components,
-    nodeOf,
-    sourceCompId: source?.id,
-  })
-
-  // 交流稳态（相量）
-  let acResult = null
-  if (hasACSource) {
-    acResult = solveAC({ nodes, components, nodeOf })
-  }
-
-  // 瞬态（含储能元件时，即使直流源也能算充放电）
-  let transientResult = null
-  if (hasStorage) {
-    transientResult = solveTransient({ nodes, components, nodeOf })
-  }
-
-  // 非线性（含 LED 二极管时）：Newton-Raphson + Shockley 模型求解，
-  // 输出比「分段线性简化模型」更精确的二极管工作点（指数伏安特性）。
-  // 作为增强结果并入 solution，不改动 sol.branchCurrents（保证判分零回归）。
-  let nonlinearResult = null
-  if (hasNonlinearElements(components)) {
-    nonlinearResult = solveNonlinearDC({ nodes, components, nodeOf })
-  }
-
-  // 5) 接线拓扑判定（带标签多重图的子图同构匹配）—— 标准答案来自实验配置
-  const wiring = evaluateWiring({
-    components,
-    nodeOf,
-    target: spec.grading.referenceCircuits,
-    requiredTypes: spec.grading.requiredTypes,
-    typeNames: spec.grading.typeNames,
-    messages: spec.grading.messages,
-  })
-
-  // 6) 仪表读数：测哪个元件由配置的 measurements 决定（不再固定取 RHEO）
-  const meters = computeReadings({ spec, components, nodeOf, solution: sol })
-  const readings = { u: meters.u, i: meters.i }
-
-  // 6.5) 诊断式判分：不止判对错，还定位"错在哪、为什么、怎么改"
-  const params = { U0: source?.value ?? 0 }
-  const diagnostics = diagnose({
-    components,
-    nodeOf,
-    solution: sol,
-    wiring,
+  // 2~8) 统一判分流水线（拓扑→求解→诊断→评分→审计）
+  //     指纹由后端注入 computeFingerprint（依赖 node:crypto）。
+  const analysis = analyzeCircuit({
     spec,
-    readings,
-    params,
-  })
-
-  // 7) 判分可信审计链：生成可验证指纹（拓扑规范形 + 算法版本 + 结论）
-  //    教师端据此验证「分数与电路一致、算法版本一致、争议可追溯」。
-  const fingerprint = computeFingerprint({
-    experimentId: spec.id,
-    wiringResult: wiring,
     components,
-    nodeOf,
-    targetJson: JSON.stringify(spec.grading?.referenceCircuits || []),
+    nodeOf: topo.nodeOf,
+    nodes: topo.nodes,
+    topo,
+    source,
+    fingerprintFn: computeFingerprint,
   })
-
-  // 节点明细（教学展示用）
-  const nodeList = nodes.map((n) => ({
-    id: n.id,
-    holes: n.elements.filter((e) => e.startsWith('hole:')).length,
-    pins: n.elements
-      .filter((e) => e.startsWith('pin:'))
-      .map((e) => e.split(':').slice(1).join('.')),
-    elements: n.elements.length,
-  }))
 
   const elapsedMs = Number(process.hrtime.bigint() - t0) / 1e6
 
   return {
     ok: true,
     analysis: {
-      elementCount: topo.elements.length,
-      nodeCount: nodes.length,
-      nodes: nodeList,
-      shorts,
-      netlist,
-      solution: {
-        ok: !!sol.ok,
-        message: sol.message ?? null,
-        nodeVoltages: mapToObject(sol.nodeVoltages),
-        branchCurrents: mapToObject(sol.branchCurrents),
-        groundNode: sol.groundNode ?? null,
-        conditionNumber: sol.conditionNumber ?? null,
-        illConditioned: !!sol.illConditioned,
-        numericWarning: sol.numericWarning ?? null,
-        // 非线性求解增强结果（仅当电路含 LED 时存在）
-        nonlinear: nonlinearResult
-          ? {
-              ok: nonlinearResult.ok,
-              converged: nonlinearResult.converged,
-              iterations: nonlinearResult.iterations,
-              model: 'Shockley + Newton-Raphson',
-              diodeOperatingPoints: Object.fromEntries(
-                [...nonlinearResult.diodeOperatingPoints].map(([k, v]) => [
-                  k,
-                  { vd: v.vd, id: v.id, gd: v.gd },
-                ])
-              ),
-              ledCurrents: Object.fromEntries(
-                [...nonlinearResult.diodeOperatingPoints].map(([k, v]) => [k, v.id])
-              ),
-              message: nonlinearResult.message ?? null,
-            }
-          : null,
-      },
-      wiring: {
-        ok: !!wiring.ok,
-        // reason 是机器可读的判定原因，前端据此做分级判分
-        reason: wiring.reason || null,
-        message: wiring.message,
-        polarityReversed: !!wiring.polarityReversed,
-        missing: wiring.missing || [],
-        extra: wiring.extra || [],
-        liveEdgeCount: wiring.liveEdgeCount ?? 0,
-        // 判分审计链：指纹 + 算法版本，随报告一起入库
-        fingerprint,
-        algoVersion: ALGO_VERSION,
-      },
-      readings,
-      diagnostics,
-      // 交流稳态（相量）结果：仅当电路含交流源时存在
-      ac: acResult
-        ? {
-            ok: acResult.ok,
-            frequency: acResult.frequency,
-            omega: acResult.omega,
-            amplitude: acResult.amplitude,
-            nodeVoltages: acResult.ok
-              ? Object.fromEntries(
-                  [...acResult.nodeVoltages].map(([k, v]) => [k, { mag: v.mag, phase: v.phase }])
-                )
-              : {},
-            branchCurrents: acResult.ok
-              ? Object.fromEntries(
-                  [...acResult.branchCurrents].map(([k, v]) => [k, { mag: v.mag, phase: v.phase }])
-                )
-              : {},
-            message: acResult.message ?? null,
-          }
-        : null,
-      // 瞬态（时域波形）结果：仅当电路含储能元件时存在
-      transient: transientResult
-        ? {
-            ok: transientResult.ok,
-            timeConstant: transientResult.timeConstant ?? null,
-            tEnd: transientResult.tEnd ?? null,
-            times: transientResult.times ?? [],
-            nodeVoltages: transientResult.ok
-              ? Object.fromEntries(
-                  [...transientResult.nodeVoltages].map(([k, v]) => [k, v])
-                )
-              : {},
-            branchCurrents: transientResult.ok
-              ? Object.fromEntries(
-                  [...transientResult.branchCurrents].map(([k, v]) => [k, v])
-                )
-              : {},
-            message: transientResult.message ?? null,
-          }
-        : null,
-      sourceCompId: source?.id ?? null,
-      // 便于排查：这次用的是哪份实验配置、测的是哪个元件
-      experimentKey: spec.id,
-      meterTargets: { volt: meters.voltTargetId, amp: meters.ampTargetId },
+      ...analysis,
+      // 算法版本随审计链一起返回（前端据此校验指纹时效）
+      wiring: { ...analysis.wiring, algoVersion: ALGO_VERSION },
+      // 判分追溯链：把「拓扑→求解→判定→读数→诊断→档位→指纹」组织成可逐条核查的步骤
+      trace: buildTrace(analysis),
     },
     elapsedMs: Math.round(elapsedMs * 1000) / 1000,
   }

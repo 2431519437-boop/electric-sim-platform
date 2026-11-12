@@ -31,6 +31,7 @@ import {
   experimentGet,
   overview,
   insightsView,
+  traceView,
 } from './store.js'
 import { listUsers, countUsers, listAllRecords } from './db.js'
 
@@ -346,6 +347,16 @@ const routes = {
   'GET /api/admin/insights': async (req, res) => {
     if (!requireTeacher(req, res)) return
     sendJson(res, 200, { ok: true, ...insightsView() })
+  },
+
+  // 判分追溯：给定报告 id，还原「这个分数怎么算出来的」完整推理链（教师端）
+  'GET /api/admin/trace': async (req, res, url) => {
+    if (!requireTeacher(req, res)) return
+    const id = Number(new URL(url, 'http://x').searchParams.get('id'))
+    if (!Number.isInteger(id) || id <= 0) return fail(res, 400, '缺少有效报告 id')
+    const trace = traceView(id)
+    if (!trace) return fail(res, 404, '报告不存在')
+    sendJson(res, 200, { ok: true, trace })
   },
 }
 

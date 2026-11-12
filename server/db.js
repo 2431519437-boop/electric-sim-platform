@@ -392,6 +392,47 @@ export function listAllRecords(limit = 200) {
     .all(limit)
 }
 
+/**
+ * 判分追溯：给定报告 id，还原出「这个分数是怎么一步步算出来的」。
+ *
+ * 追溯链（trace）由前端/后端判分时通过 pipeline 的 buildTrace() 生成，
+ * 随报告 payload 一起落库。这里把 payload 里的 trace 抽出来，连同
+ * 指纹、算法版本、档位一起返回，形成完整的「争议可追溯」闭环：
+ *   - 分数 → 档位系数 → 诊断结论 → 读数 → 接线判定 → 求解 → 指纹
+ *
+ * @param {number} reportId 报告 id（教师可查任意学生）
+ * @returns {object|null} 含 trace 步骤、指纹、档位、分数的追溯结果
+ */
+export function traceReport(reportId) {
+  const row = db
+    .prepare(
+      `SELECT r.id, r.score, r.grade, r.fingerprint, r.algo_version, r.payload_json, r.created_at,
+              u.id AS user_id, u.username, u.display_name
+       FROM reports r JOIN users u ON u.id = r.user_id
+       WHERE r.id = ?`
+    )
+    .get(reportId)
+  if (!row) return null
+
+  const payload = safeParse(row.payload_json)
+  const trace = Array.isArray(payload?.trace) ? payload.trace : []
+
+  return {
+    reportId: row.id,
+    user: { id: row.user_id, username: row.username, displayName: row.display_name },
+    score: row.score,
+    grade: row.grade,
+    fingerprint: row.fingerprint,
+    algoVersion: row.algo_version,
+    createdAt: row.created_at,
+    // 追溯链：判分每一步（含 stage/summary/detail）
+    trace,
+    traceText: trace
+      .map((s) => `[${s.stage}] ${s.summary}`)
+      .join('\n'),
+  }
+}
+
 /* ---------------- 学情分析（教师端洞察） ---------------- */
 
 /**
