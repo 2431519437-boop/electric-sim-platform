@@ -50,6 +50,15 @@ export function generateNetlist({ nodes, components, nodeOf }) {
       case 'SWITCH':
         lines.push(`${name} ${n1 ?? '0'} ${n2 ?? '0'} SW ${c.closed ? 'ON' : 'OFF'}`)
         break
+      case 'CAP':
+        lines.push(`${name} ${n1 ?? '0'} ${n2 ?? '0'} C ${c.value}`)
+        break
+      case 'IND':
+        lines.push(`${name} ${n1 ?? '0'} ${n2 ?? '0'} L ${c.value}`)
+        break
+      case 'ACVSRC':
+        lines.push(`${name} ${n1 ?? '0'} ${n2 ?? '0'} AC ${c.value} ${c.frequency ?? 50}Hz`)
+        break
       default:
         lines.push(`* 未识别元件类型: ${c.type}`)
     }

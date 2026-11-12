@@ -98,12 +98,62 @@ export const DEF_SWITCH = {
   ],
 }
 
+export const DEF_CAP = {
+  type: 'CAP',
+  name: '电容',
+  prefix: 'C',
+  unit: 'μF',
+  defaultValue: 100, // μF
+  min: 1,
+  max: 1000,
+  step: 10,
+  pins: [
+    { name: '+', role: 'pos', offset: { x: -0.34, y: -PIN_DROP, z: 0 } },
+    { name: '-', role: 'neg', offset: { x: 0.34, y: -PIN_DROP, z: 0 } },
+  ],
+}
+
+export const DEF_IND = {
+  type: 'IND',
+  name: '电感',
+  prefix: 'L',
+  unit: 'mH',
+  defaultValue: 10, // mH
+  min: 1,
+  max: 100,
+  step: 1,
+  pins: [
+    { name: '1', role: 'a', offset: { x: -0.39, y: -PIN_DROP, z: 0 } },
+    { name: '2', role: 'b', offset: { x: 0.39, y: -PIN_DROP, z: 0 } },
+  ],
+}
+
+export const DEF_ACVSRC = {
+  type: 'ACVSRC',
+  name: '交流电源',
+  prefix: 'VAC',
+  unit: 'V',
+  defaultValue: 6, // 幅值 V
+  frequency: 50, // Hz
+  phase: 0, // 弧度
+  min: 0,
+  max: 30,
+  step: 0.1,
+  pins: [
+    { name: '+', role: 'pos', offset: { x: -0.39, y: -PIN_DROP, z: 0 } },
+    { name: '-', role: 'neg', offset: { x: 0.39, y: -PIN_DROP, z: 0 } },
+  ],
+}
+
 /** 器件库（UI 侧边栏按顺序渲染） */
 export const LIBRARY = [
   { key: 'vs', icon: '🔋', def: DEF_VSRC, desc: '0~30V 可调直流电压源' },
+  { key: 'acvs', icon: '〜', def: DEF_ACVSRC, desc: '正弦交流电源（幅值/频率可调）' },
   { key: 'r1', icon: '🧱', def: DEF_RES, desc: '200Ω 固定电阻' },
   { key: 'r2', icon: '🎛️', def: DEF_RHEO, desc: '470Ω 可调电位器' },
   { key: 'led', icon: '💡', def: DEF_LED, desc: '正向压降 1.8V' },
+  { key: 'cap', icon: '🫙', def: DEF_CAP, desc: '电解电容（μF）' },
+  { key: 'ind', icon: '🌀', def: DEF_IND, desc: '电感线圈（mH）' },
   { key: 'sw', icon: '🔀', def: DEF_SWITCH, desc: '单刀开关' },
 ]
 
@@ -436,11 +486,132 @@ function buildSWITCH(group, def) {
   }
 }
 
+/** 电容：电解电容圆柱（顶部带负极标记 + 容值丝印） */
+function buildCAP(group, def) {
+  // 圆柱壳体
+  const body = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.34, 24), mat(0x1e40af, { roughness: 0.4 })))
+  body.rotation.z = Math.PI / 2
+  body.position.y = 0.05
+  group.add(body)
+
+  // 顶部铝壳
+  const top = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.04, 24), mat(0xcbd5e1, { metalness: 0.85, roughness: 0.25 })))
+  top.rotation.z = Math.PI / 2
+  top.position.set(-0.17, 0.05, 0)
+  group.add(top)
+
+  // 负极标记（一道灰带）
+  const negBand = new THREE.Mesh(new THREE.CylinderGeometry(0.175, 0.175, 0.04, 24), mat(0x64748b, { roughness: 0.5 }))
+  negBand.rotation.z = Math.PI / 2
+  negBand.position.set(0.05, 0.05, 0)
+  group.add(negBand)
+
+  // 容值丝印
+  const label = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.04, 0.004), mat(0xdbeafe))
+  label.position.set(0, 0.05, 0.172)
+  group.add(label)
+
+  // 两侧引线
+  for (const s of [-1, 1]) {
+    group.add(
+      cylinderBetween(
+        new THREE.Vector3(s * 0.19, 0.0, 0),
+        new THREE.Vector3(s * 0.34, 0.0, 0),
+        0.011,
+        mat(0xb8c4d0, { metalness: 0.9, roughness: 0.25 })
+      )
+    )
+  }
+}
+
+/** 电感：环形磁芯 + 线圈绕线 */
+function buildIND(group, def) {
+  // 环形磁芯（torus）
+  const core = shadow(new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.07, 14, 28), mat(0x4b5563, { roughness: 0.6, metalness: 0.2 })))
+  core.position.y = 0.05
+  core.rotation.x = Math.PI / 2
+  group.add(core)
+
+  // 线圈：绕磁芯的铜线（若干小环，简化）
+  const wireMat = mat(0xd4a017, { metalness: 0.9, roughness: 0.25 })
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.015, 8, 20), wireMat)
+    ring.position.set(Math.cos(a) * 0.0, 0.05, Math.sin(a) * 0.0)
+    ring.rotation.x = Math.PI / 2
+    ring.rotation.y = a
+    group.add(ring)
+  }
+
+  // 两侧引线
+  for (const s of [-1, 1]) {
+    group.add(
+      cylinderBetween(
+        new THREE.Vector3(s * 0.16, 0.0, 0),
+        new THREE.Vector3(s * 0.39, 0.0, 0),
+        0.011,
+        mat(0xb8c4d0, { metalness: 0.9, roughness: 0.25 })
+      )
+    )
+  }
+}
+
+/** 交流电源：类似恒压源机箱 + 正弦波标记 */
+function buildACVSRC(group, def) {
+  const body = shadow(
+    new THREE.Mesh(new THREE.BoxGeometry(0.96, 0.6, 0.54), mat(0x3b2f5f, { metalness: 0.45, roughness: 0.5 }))
+  )
+  body.position.y = 0.16
+  group.add(body)
+
+  // 前面板正弦标记（用一条波浪线示意）
+  const waveStrip = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.04, 0.01), mat(0xf59e0b, { metalness: 0.2 }))
+  waveStrip.position.set(0, 0.38, 0.272)
+  group.add(waveStrip)
+
+  // 数码显示屏
+  const canvas = document.createElement('canvas')
+  canvas.width = 128
+  canvas.height = 48
+  const ctx = canvas.getContext('2d')
+  ctx.fillStyle = '#0a0a0a'
+  ctx.fillRect(0, 0, 128, 48)
+  ctx.fillStyle = '#fbbf24'
+  ctx.font = 'bold 28px monospace'
+  ctx.textAlign = 'right'
+  ctx.fillText((def.defaultValue ?? 6).toFixed(1), 112, 26)
+  ctx.fillStyle = '#fde68a'
+  ctx.font = 'bold 14px monospace'
+  ctx.fillText('~V', 122, 28)
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.needsUpdate = true
+  const display = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.19), new THREE.MeshBasicMaterial({ map: tex }))
+  display.position.set(-0.06, 0.2, 0.2725)
+  group.add(display)
+  group.userData.display = display
+  display.userData.canvas = canvas
+  display.userData.ctx = ctx
+
+  // 接线柱
+  const posts = [
+    { x: -0.39, color: 0xdc2626 },
+    { x: 0.39, color: 0x2563eb },
+  ]
+  for (const p of posts) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.13, 16), mat(p.color, { metalness: 0.6, roughness: 0.35 }))
+    post.position.set(p.x, 0.16, 0.3)
+    group.add(post)
+  }
+}
+
 const BUILDERS = {
   VSRC: buildVSRC,
+  ACVSRC: buildACVSRC,
   RES: buildRES,
   RHEO: buildRHEO,
   LED: buildLED,
+  CAP: buildCAP,
+  IND: buildIND,
   SWITCH: buildSWITCH,
 }
 

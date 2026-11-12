@@ -11,6 +11,8 @@
 
 import { buildElectricalNodes, detectShortCircuit } from '../src/circuit/unionFindTopo.js'
 import { generateNetlist, solveCircuit } from '../src/circuit/circuitCore.js'
+import { solveAC } from '../src/circuit/acSolver.js'
+import { solveTransient } from '../src/circuit/transientSolver.js'
 import { evaluateWiring } from '../src/circuit/graphMatch.js'
 import { computeReadings } from '../src/circuit/readings.js'
 import { diagnose } from '../src/circuit/diagnose.js'
@@ -79,15 +81,32 @@ export function analyze(payload) {
   const netlist = generateNetlist({ nodes, components, nodeOf })
 
   // 4) 电路求解（MNA + 高斯消元）
+  //    检测储能元件/交流源：含电容/电感 → 可做瞬态；含交流源 → 相量稳态。
+  //    纯电阻直流电路仍走原直流求解器，保证判分零回归。
   const source = payload.sourceCompId
     ? components.find((c) => c.id === payload.sourceCompId)
-    : components.find((c) => c.type === 'VSRC')
+    : components.find((c) => c.type === 'VSRC') || components.find((c) => c.type === 'ACVSRC')
+  const hasStorage = components.some((c) => c.type === 'CAP' || c.type === 'IND')
+  const hasACSource = components.some((c) => c.type === 'ACVSRC')
+
   const sol = solveCircuit({
     nodes,
     components,
     nodeOf,
     sourceCompId: source?.id,
   })
+
+  // 交流稳态（相量）
+  let acResult = null
+  if (hasACSource) {
+    acResult = solveAC({ nodes, components, nodeOf })
+  }
+
+  // 瞬态（含储能元件时，即使直流源也能算充放电）
+  let transientResult = null
+  if (hasStorage) {
+    transientResult = solveTransient({ nodes, components, nodeOf })
+  }
 
   // 5) 接线拓扑判定（带标签多重图的子图同构匹配）—— 标准答案来自实验配置
   const wiring = evaluateWiring({
@@ -170,6 +189,46 @@ export function analyze(payload) {
       },
       readings,
       diagnostics,
+      // 交流稳态（相量）结果：仅当电路含交流源时存在
+      ac: acResult
+        ? {
+            ok: acResult.ok,
+            frequency: acResult.frequency,
+            omega: acResult.omega,
+            amplitude: acResult.amplitude,
+            nodeVoltages: acResult.ok
+              ? Object.fromEntries(
+                  [...acResult.nodeVoltages].map(([k, v]) => [k, { mag: v.mag, phase: v.phase }])
+                )
+              : {},
+            branchCurrents: acResult.ok
+              ? Object.fromEntries(
+                  [...acResult.branchCurrents].map(([k, v]) => [k, { mag: v.mag, phase: v.phase }])
+                )
+              : {},
+            message: acResult.message ?? null,
+          }
+        : null,
+      // 瞬态（时域波形）结果：仅当电路含储能元件时存在
+      transient: transientResult
+        ? {
+            ok: transientResult.ok,
+            timeConstant: transientResult.timeConstant ?? null,
+            tEnd: transientResult.tEnd ?? null,
+            times: transientResult.times ?? [],
+            nodeVoltages: transientResult.ok
+              ? Object.fromEntries(
+                  [...transientResult.nodeVoltages].map(([k, v]) => [k, v])
+                )
+              : {},
+            branchCurrents: transientResult.ok
+              ? Object.fromEntries(
+                  [...transientResult.branchCurrents].map(([k, v]) => [k, v])
+                )
+              : {},
+            message: transientResult.message ?? null,
+          }
+        : null,
       sourceCompId: source?.id ?? null,
       // 便于排查：这次用的是哪份实验配置、测的是哪个元件
       experimentKey: spec.id,

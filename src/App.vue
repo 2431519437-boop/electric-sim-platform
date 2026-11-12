@@ -160,6 +160,8 @@ import ConsolePanel from './components/ConsolePanel.vue'
 import { LIBRARY } from './circuit/componentLibrary.js'
 import { buildElectricalNodes, detectShortCircuit } from './circuit/unionFindTopo.js'
 import { generateNetlist, solveCircuit } from './circuit/circuitCore.js'
+import { solveAC } from './circuit/acSolver.js'
+import { solveTransient } from './circuit/transientSolver.js'
 import { evaluateWiring } from './circuit/graphMatch.js'
 import { computeReadings } from './circuit/readings.js'
 import { gradeTier, referenceResistorValue } from './circuit/tieredGrade.js'
@@ -869,6 +871,31 @@ async function runAnalysis(silent = false) {
     const c = state.components.find((x) => x.id === k)
     pushLog(`  I(${k}${c ? ' ' + c.name : ''}) = ${(i * 1000).toFixed(3)} mA`)
   })
+
+  // 4.5) 交流稳态 / 瞬态求解（含储能元件或交流源时触发，与直流判分并存）
+  const hasStorage = state.components.some((c) => c.type === 'CAP' || c.type === 'IND')
+  const hasACSource = state.components.some((c) => c.type === 'ACVSRC')
+
+  if (hasACSource) {
+    const ac = solveAC({ nodes: topo.nodes, components: state.components, nodeOf: topo.nodeOf })
+    if (ac.ok) {
+      pushLog(`[交流] 正弦稳态 f=${ac.frequency}Hz，节点相量电压：`)
+      ac.nodeVoltages.forEach((v, k) =>
+        pushLog(`  V(${k}) = ${v.mag.toFixed(3)}V ∠ ${(v.phase * 180 / Math.PI).toFixed(1)}°`)
+      )
+    } else {
+      pushLog(`[交流] ${ac.message}`, 'warn')
+    }
+  }
+
+  if (hasStorage) {
+    const tr = solveTransient({ nodes: topo.nodes, components: state.components, nodeOf: topo.nodeOf })
+    if (tr.ok) {
+      pushLog(`[瞬态] 时间常数 τ=${tr.timeConstant.toFixed(4)}s，仿真 ${tr.tEnd.toFixed(3)}s`)
+    } else {
+      pushLog(`[瞬态] ${tr.message}`, 'warn')
+    }
+  }
 
   // 5) 接线拓扑判定：带标签多重图的图同构匹配（VF2 回溯）
   //    能区分：完全正确 / R1R2 顺序不同但等效 / 多接元件 / 少接悬空 / 阻值错 / 并联接错
