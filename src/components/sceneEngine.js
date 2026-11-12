@@ -12,6 +12,9 @@ import {
   generateHoles,
   generateHoleGroups,
   boardSize,
+  columnX,
+  rowZ,
+  railZ,
   BOARD_GEOM,
 } from '../circuit/breadboardModel.js'
 import { createComponent, LIBRARY, syncSeq } from '../circuit/componentLibrary.js'
@@ -27,13 +30,26 @@ const WIRE_COLORS = [0xdc2626, 0x1f2937, 0x2563eb, 0x16a34a, 0xeab308, 0xf8fafc]
 /** 导线拾取阈值：NDC（屏幕空间）距离，与分辨率/缩放无关；0.07 ≈ 视口宽度的 3.5% */
 const WIRE_PICK_NDC = 0.07
 /**
- * 连线模式下孔位的最大吸附距离（世界坐标）。
- * 孔位间距约 0.14，0.25 约等于 1.8 个孔距：既能容忍手指误差，
- * 又不会让"点板外空白"也吸到最近的孔。
+ * 连线模式下引脚的拾取阈值（NDC）。
+ * 略小于孔位吸附，保证"点引脚"优先于"吸到旁边的孔"。
  */
-const HOLE_PICK_MAX = 0.25
+const PIN_PICK_NDC = 0.055
+/**
+ * 拔线拾取阈值（NDC）：必须精确点在导线金属端头上才会拔起，
+ * 刻意小于引脚阈值，避免想连线时误把旧线拔了。
+ */
+const WIRE_TIP_PICK_NDC = 0.04
+/**
+ * 连线模式下孔位的最大吸附距离（世界坐标）。
+ * 孔距 0.12~0.13，取 0.1（约 0.8 个孔距）：必须真正瞄准某个孔才会吸附。
+ * 早期版本用 0.25（≈1.8 个孔距），点在两个孔中间甚至板面空白处也会被吸走，
+ * 学生根本搞不清"这一下到底连到了哪个孔"——这是误动作的主要来源。
+ */
+const HOLE_PICK_MAX = 0.1
 const WIRE_RADIUS = 0.012
 const WIRE_RADIUS_SELECTED = 0.026
+/** 手持预览导线的颜色（琥珀色，与落定的导线区分） */
+const DRAFT_WIRE_COLOR = 0xfbbf24
 
 export class SceneEngine {
   constructor(container, hooks = {}) {
@@ -48,6 +64,8 @@ export class SceneEngine {
 
     this.mode = 'drag' // 'drag' | 'wire'
     this.wireDraft = null // 导线模式下已选中的第一个端点
+    this.editing = null // 拔线改接中：{ wire, end:'from'|'to' }，该端被拔起拿在手里
+    this.hoverEndpoint = null // 连线模式下当前对准的端点（预览线吸附用）
     this.selected = null
     this.selectedWire = null // 被选中的导线（拖拽模式下点击导线可选中，用于单独删除）
     this.raycaster = new THREE.Raycaster()
@@ -517,6 +535,29 @@ export class SceneEngine {
     this.holeMarker.visible = false
     g.add(this.holeMarker)
 
+    // 连线起点标记（琥珀色环）：选定起点后常驻，让学生始终知道"这根线从哪来"
+    this.draftMarker = new THREE.Mesh(
+      new THREE.TorusGeometry(0.088, 0.013, 10, 28),
+      new THREE.MeshBasicMaterial({ color: 0xf59e0b })
+    )
+    this.draftMarker.rotation.x = -Math.PI / 2
+    this.draftMarker.visible = false
+    this.scene.add(this.draftMarker)
+
+    // 手持导线预览：选定起点后，线的一头"拿在手里"跟鼠标走，第二下点才落下。
+    // 点下去之前就能看到会连成什么样 —— 这是消除误连的关键反馈。
+    this.draftMesh = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial({ color: DRAFT_WIRE_COLOR, transparent: true, opacity: 0.9 })
+    )
+    this.draftMesh.visible = false
+    this.draftMesh.raycast = () => {} // 预览线不参与拾取
+    this.scene.add(this.draftMesh)
+
+    // 板面丝印：列号 1~30、行标 F1~F5 / B1~B5、电源轨 +/−。
+    // 控制台日志里的孔位（如"F1-12"）因此能在板子上被一眼找到。
+    g.add(this._buildSilkscreen(size))
+
     // 引脚高亮环：导线模式下对准的引脚会被套一个青色光环
     this.pinMarker = new THREE.Mesh(
       new THREE.TorusGeometry(0.055, 0.009, 10, 24),
@@ -529,6 +570,77 @@ export class SceneEngine {
     this.board = g
     this.boardWorld = { x: 0, y: 0, z: 0 }
     this.scene.add(g)
+  }
+
+  /**
+   * 板面丝印层：一张 CanvasTexture 透明平面浮在孔口上方，
+   * 画出列号（1~30）、行标（F1~F5 / B1~B5）与电源轨极性（+ / −）。
+   * 与 generateHoles 的孔位标签（如 F1-12）严格一致，
+   * 学生看到日志/提示里的孔号后能立刻在板子上找到位置。
+   */
+  _buildSilkscreen(size) {
+    const { width, depth } = size
+    const PXW = 2048
+    const PXH = Math.round((PXW * depth) / width)
+    const canvas = document.createElement('canvas')
+    canvas.width = PXW
+    canvas.height = PXH
+    const ctx = canvas.getContext('2d')
+    // 世界坐标 → 画布坐标
+    const px = (x) => ((x + width / 2) / width) * PXW
+    const pz = (z) => ((z + depth / 2) / depth) * PXH
+
+    const ink = 'rgba(70, 82, 96, 0.92)'
+    ctx.fillStyle = ink
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+
+    // 列号：上边缘 + 下边缘各一排（1~30）
+    ctx.font = `600 ${Math.round(PXH * 0.022)}px sans-serif`
+    const colTopZ = -depth / 2 + 0.055
+    const colBotZ = depth / 2 - 0.055
+    for (let c = 0; c < BOARD_GEOM.cols; c++) {
+      const x = columnX(c)
+      ctx.fillText(String(c + 1), px(x), pz(colTopZ))
+      ctx.fillText(String(c + 1), px(x), pz(colBotZ))
+    }
+
+    // 行标：左边缘 F1~F5（前侧）与 B1~B5（后侧），右边缘重复一份方便另一侧观看
+    ctx.font = `600 ${Math.round(PXH * 0.026)}px sans-serif`
+    const leftX = -width / 2 + 0.085
+    const rightX = width / 2 - 0.085
+    for (let r = 0; r < BOARD_GEOM.rowsPerBank; r++) {
+      for (const [side, tag] of [['front', 'F'], ['back', 'B']]) {
+        const z = rowZ(r, side)
+        ctx.fillText(`${tag}${r + 1}`, px(leftX), pz(z))
+        ctx.fillText(`${tag}${r + 1}`, px(rightX), pz(z))
+      }
+    }
+
+    // 电源轨极性：左右两端各标一次 + / −
+    ctx.font = `700 ${Math.round(PXH * 0.034)}px sans-serif`
+    for (const side of ['front', 'back']) {
+      for (const [offset, sign, color] of [[1, '+', 'rgba(200,38,38,0.95)'], [2, '−', 'rgba(37,99,235,0.95)']]) {
+        const z = railZ(side, offset)
+        ctx.fillStyle = color
+        ctx.fillText(sign, px(-width / 2 + 0.16), pz(z))
+        ctx.fillText(sign, px(width / 2 - 0.16), pz(z))
+        ctx.fillStyle = ink
+      }
+    }
+
+    const tex = new THREE.CanvasTexture(canvas)
+    tex.anisotropy = 4
+    tex.needsUpdate = true
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(width, depth),
+      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false })
+    )
+    plane.rotation.x = -Math.PI / 2
+    // 孔口圆柱顶面在 -0.03，丝印浮在更高一点的位置，避免压盖插孔
+    plane.position.y = -0.028
+    plane.raycast = () => {} // 丝印不参与拾取
+    return plane
   }
 
   /* ================= 元件管理 ================= */
@@ -561,6 +673,9 @@ export class SceneEngine {
 
   clearAll() {
     this.selectWire(null)
+    this.editing = null
+    this.hoverEndpoint = null
+    this._clearDraft()
     ;[...this.wires].forEach((w) => this.removeWire(w))
     ;[...this.components].forEach((c) => this.removeComponent(c))
     this.wireCounter = 0
@@ -617,7 +732,17 @@ export class SceneEngine {
       new THREE.MeshStandardMaterial({ color, roughness: 0.45, metalness: 0.15 })
     )
     mesh.castShadow = true
-    const wire = { id: `W${this.wireCounter}`, from, to, mesh, color }
+    // 导线两端的金属端头（香蕉插头）：
+    // ① 视觉上更像真实导线；② 连线模式下点它可以"拔起来改接"
+    const tipGeo = new THREE.SphereGeometry(0.021, 10, 8)
+    const tipMat = new THREE.MeshStandardMaterial({ color: 0xd8dee6, metalness: 0.85, roughness: 0.3 })
+    const tipA = new THREE.Mesh(tipGeo, tipMat)
+    const tipB = new THREE.Mesh(tipGeo, tipMat)
+    tipA.raycast = () => {}
+    tipB.raycast = () => {}
+    this.scene.add(tipA)
+    this.scene.add(tipB)
+    const wire = { id: `W${this.wireCounter}`, from, to, mesh, color, tipA, tipB }
     this.scene.add(mesh)
     this.wires.push(wire)
     this._updateWireGeometry(wire)
@@ -635,7 +760,18 @@ export class SceneEngine {
       this.selectedWire = null
       this.hooks.onWireSelect?.(null)
     }
+    // 正在被拔起改接的线被删除：清掉改接状态
+    if (this.editing?.wire === wire) {
+      this.editing = null
+      this._clearDraft()
+    }
     this.scene.remove(wire.mesh)
+    if (wire.tipA) {
+      this.scene.remove(wire.tipA)
+      this.scene.remove(wire.tipB)
+      wire.tipA.geometry.dispose()
+      wire.tipA.material.dispose()
+    }
     wire.mesh.geometry.dispose()
     wire.mesh.material.dispose()
     this.wires = this.wires.filter((w) => w !== wire)
@@ -666,6 +802,11 @@ export class SceneEngine {
     wire.mesh.geometry = new THREE.TubeGeometry(curve, 40, radius, 8, false)
     // 采样点留给射线拾取用（跟几何同步更新，导线拉伸后依然点得中）
     wire.pickPoints = curve.getPoints(40)
+    // 金属端头贴着两个端点摆放
+    if (wire.tipA) {
+      wire.tipA.position.copy(a)
+      wire.tipB.position.copy(b)
+    }
   }
 
   /** 元件移动后，刷新所有相关导线（橡皮筋效果） */
@@ -694,8 +835,7 @@ export class SceneEngine {
     })
     // 双击画布：一键回到全景（防止视角被转到看不见整板）
     el.addEventListener('dblclick', () => {
-      this.wireDraft = null
-      this.hooks.onWireDraft?.(null)
+      this._cancelDraft({ silent: true })
       this.resetView()
     })
     el.addEventListener('wheel', (e) => this._onWheel(e), { passive: false })
@@ -789,8 +929,13 @@ export class SceneEngine {
   _onPointerDown(e) {
     this._setPointer(e)
 
-    // 右键：旋转选中元件（或悬停元件）
+    // 右键：连线模式下先取消半截连线；否则旋转选中元件（或悬停元件）
     if (e.button === 2) {
+      if (this.mode === 'wire' && this.wireDraft) {
+        this._cancelDraft()
+        this.hooks.onWireMiss?.('cancelled')
+        return
+      }
       const comp = this._pickComponent()
       if (comp) {
         this.rotating = comp
@@ -849,7 +994,13 @@ export class SceneEngine {
 
     // 连线模式：把高亮环套在"这一下会点到的端点"上，学生才知道要往哪点
     if (this.mode === 'wire' && !this.dragging && !this.rotating) {
-      this._showEndpointMarker(this._pickEndpoint())
+      const ep = this._pickEndpoint()
+      this.hoverEndpoint = ep
+      this._showEndpointMarker(ep)
+      // 预览线实时跟随：对准端点就吸附上去，点下去之前就知道会连成什么样
+      if (this.wireDraft) this._updateDraftPreview()
+      // 同时把目标名字报给外层提示条（如 "孔位 F1-12"、"R1.1"）
+      this.hooks.onEndpointHover?.(ep ? this.describeEndpoint(ep) : '')
       this.renderer.domElement.style.cursor = 'crosshair'
       return
     }
@@ -954,8 +1105,10 @@ export class SceneEngine {
 
   /* ================= 导线模式 ================= */
   setMode(mode) {
+    // 切模式前把半截连线/拔到一半的线收干净，避免状态残留
+    this._cancelDraft({ silent: true })
+    this.hoverEndpoint = null
     this.mode = mode
-    this.wireDraft = null
     // 只有拖拽模式需要"选中导线"；连线/删除模式下点击语义不同，先清掉选中态
     if (mode !== 'drag') this.selectWire(null)
     if (this.holeMarker) this.holeMarker.visible = false
@@ -1031,42 +1184,196 @@ export class SceneEngine {
     if (knob && def.maxValue) {
       knob.rotation.y = ((def.maxValue - v) / def.maxValue) * Math.PI * 1.8
     }
+    // 电阻色环跟着阻值变（红红棕 ≠ 黄紫棕，外观即参数）
+    comp.group.userData.setBands?.(v)
     this.hooks.onLog?.(`[参数] ${def.name} 设为 ${v}${def.unit || ''}`)
     return comp
   }
 
+  /**
+   * 连线模式的一次点击。整条交互是"两点确认 + 全程可视"：
+   *   ① 点起点 → 琥珀圈套住起点，预览线一头固定在起点、一头拿在手里跟鼠标走
+   *   ② 移动   → 预览线实时吸附到将要点中的端点上（所见即所得）
+   *   ③ 点终点 → 线落下；点空白 / 右键 / Esc → 取消
+   * 特例：起点若点在已有导线的金属端头上 = 拔起这一端（改接），点新位置复接。
+   */
   _handleWireClick() {
     const ep = this._pickEndpoint()
-    if (!ep) {
-      // 点到空白处：取消已选的起点，避免一直挂着"半截连线"。
-      // 同时给一个肉眼可见的反馈 —— 光写进控制台，学生在手机上根本看不到。
-      if (this.wireDraft) {
-        this.wireDraft = null
-        this.hooks.onWireDraft?.(null)
-        this.hooks.onLog?.('[导线] 已取消当前连线')
-        this.hooks.onWireMiss?.('cancelled')
-      } else {
+
+    if (!this.wireDraft) {
+      // 拔线优先于新连线：端头半径刻意收窄（0.04 NDC），只有刻意点端头才触发
+      const tip = this._pickWireTip()
+      if (tip) {
+        this._liftWireEnd(tip)
+        return
+      }
+      if (!ep) {
         this.hooks.onLog?.('[导线] 未拾取到引脚或孔位')
         this.hooks.onWireMiss?.('miss')
+        return
       }
+      this._setDraft(ep)
       return
     }
-    if (!this.wireDraft) {
-      this.wireDraft = ep
-      this.hooks.onLog?.(`[导线] 起点：${this.describeEndpoint(ep)}`)
-      this.hooks.onWireDraft?.(ep)
+
+    // 第二下点空白：取消（拔起的线放回原位）
+    if (!ep) {
+      this._cancelDraft()
+      this.hooks.onWireMiss?.('cancelled')
       return
     }
-    // 同一个点不连线
+
+    // 点回起点：取消本次连线
     if (JSON.stringify(this.wireDraft) === JSON.stringify(ep)) {
-      this.wireDraft = null
-      this.hooks.onWireDraft?.(null)
+      this._cancelDraft()
       return
     }
+
+    // 拔线改接中：这一下是"复接"
+    if (this.editing) {
+      this._reattachWireEnd(ep)
+      return
+    }
+
     const wire = this.addWire(this.wireDraft, ep)
-    this.wireDraft = null
-    this.hooks.onWireDraft?.(null)
+    this._clearDraft()
     this.hooks.onWireCreated?.(wire)
+  }
+
+  /** 选中连线起点：琥珀圈 + 预览线就位 */
+  _setDraft(ep) {
+    this.wireDraft = ep
+    this._positionDraftMarker(ep)
+    if (this.draftMarker) this.draftMarker.visible = true
+    this._updateDraftPreview()
+    this.hooks.onLog?.(`[导线] 起点：${this.describeEndpoint(ep)}（预览线已拿起，点第二个端点落下）`)
+    this.hooks.onWireDraft?.(ep)
+  }
+
+  /** 清掉草稿状态（不动 editing，调用方按需先恢复被拔起的线） */
+  _clearDraft() {
+    this.wireDraft = null
+    if (this.draftMarker) this.draftMarker.visible = false
+    if (this.draftMesh) this.draftMesh.visible = false
+    this.hooks.onWireDraft?.(null)
+  }
+
+  /** 取消本次连线/改接：被拔起的线放回原位，草稿清理 */
+  _cancelDraft({ silent = false } = {}) {
+    if (this.editing) {
+      const { wire } = this.editing
+      this.editing = null
+      wire.editing = false
+      wire.mesh.visible = true
+      if (wire.tipA) wire.tipA.visible = wire.tipB.visible = true
+      this._updateWireGeometry(wire)
+      this.hooks.onLog?.(`[拔线] ${wire.id} 已放回原位，未改动`)
+    }
+    this._clearDraft()
+    if (!silent) this.hooks.onLog?.('[导线] 已取消当前连线')
+  }
+
+  /** 拔线：抓起导线的一个端头，这一端拿在手里，另一端保持不动 */
+  _liftWireEnd({ wire, end }) {
+    const other = end === 'from' ? 'to' : 'from'
+    this.editing = { wire, end }
+    wire.editing = true
+    // 原来的线隐藏，由预览线"拿着"被拔起的这一端
+    wire.mesh.visible = false
+    if (wire.tipA) wire.tipA.visible = wire.tipB.visible = false
+    this._setDraft(wire[other])
+    this.hooks.onLog?.(
+      `[拔线] ${wire.id} 的「${this.describeEndpoint(wire[end])}」端已拔起，点新孔位/引脚复接；点空白放回原位`
+    )
+    this.hooks.onWireLift?.(wire, end)
+  }
+
+  /** 复接：把拔起的端头插到新位置 */
+  _reattachWireEnd(ep) {
+    const { wire, end } = this.editing
+    this.editing = null
+    wire.editing = false
+    wire.mesh.visible = true
+    if (wire.tipA) wire.tipA.visible = wire.tipB.visible = true
+    // 插回原位 = 没有改动
+    if (JSON.stringify(wire[end]) === JSON.stringify(ep)) {
+      this._updateWireGeometry(wire)
+      this._clearDraft()
+      this.hooks.onLog?.(`[拔线] ${wire.id} 放回原位，未改动`)
+      return
+    }
+    wire[end] = ep
+    this._updateWireGeometry(wire)
+    this._clearDraft()
+    this.hooks.onLog?.(`[复接] ${wire.id} 改接到 ${this.describeEndpoint(ep)}`)
+    this.hooks.onWireReattach?.(wire)
+  }
+
+  /** 拾取导线端头（拔线用）：NDC 距离判定，只命中金属端头小球 */
+  _pickWireTip() {
+    if (!this.wires.length) return null
+    const v = new THREE.Vector3()
+    let best = null
+    let bestD = WIRE_TIP_PICK_NDC
+    for (const w of this.wires) {
+      for (const end of ['from', 'to']) {
+        const p = this.endpointPosition(w[end])
+        if (!p) continue
+        v.copy(p).project(this.camera)
+        if (v.z > 1) continue
+        const d = Math.hypot(v.x - this.pointer.x, v.y - this.pointer.y)
+        if (d < bestD) {
+          bestD = d
+          best = { wire: w, end }
+        }
+      }
+    }
+    return best
+  }
+
+  /** 把琥珀色起点环套到草稿起点上 */
+  _positionDraftMarker(ep) {
+    if (!this.draftMarker) return
+    const p = this.endpointPosition(ep)
+    if (!p) return
+    this.draftMarker.position.set(p.x, Math.max(p.y + 0.012, -0.03), p.z)
+  }
+
+  /**
+   * 手持预览线：从起点画到"当前对准的端点"（吸附，所见即所得），
+   * 没对准任何端点时跟到指尖在板面的落点。
+   */
+  _updateDraftPreview() {
+    if (!this.wireDraft || !this.draftMesh) return
+    const a = this.endpointPosition(this.wireDraft)
+    if (!a) {
+      this.draftMesh.visible = false
+      return
+    }
+    let b = null
+    const hover = this.hoverEndpoint
+    if (hover && JSON.stringify(hover) !== JSON.stringify(this.wireDraft)) {
+      b = this.endpointPosition(hover)
+    }
+    if (!b && this.pointerOnBoard) {
+      b = this.pointerOnBoard.clone()
+      b.y = Math.max(b.y, 0.02)
+    }
+    if (!b) {
+      this.draftMesh.visible = false
+      return
+    }
+    b = b.clone()
+    const dist = a.distanceTo(b)
+    const sag = Math.min(Math.max(dist * 0.26, 0.12), 0.6)
+    const mid = a.clone().lerp(b, 0.5)
+    mid.y += sag
+    const c1 = a.clone().lerp(mid, 0.5)
+    const c2 = b.clone().lerp(mid, 0.55)
+    const curve = new THREE.CatmullRomCurve3([a, c1, mid, c2, b])
+    this.draftMesh.geometry.dispose()
+    this.draftMesh.geometry = new THREE.TubeGeometry(curve, 28, WIRE_RADIUS * 1.15, 6, false)
+    this.draftMesh.visible = true
   }
 
   /** 拾取端点：优先引脚，其次孔位 */
@@ -1075,7 +1382,7 @@ export class SceneEngine {
 
     // 1) 引脚：以引脚世界坐标投影到屏幕判断
     let bestPin = null
-    let bestPinD = 0.06
+    let bestPinD = PIN_PICK_NDC
     const v = new THREE.Vector3()
     for (const comp of this.components) {
       for (const pin of comp.def.pins) {
@@ -1154,7 +1461,6 @@ export class SceneEngine {
     this.selected = null
     this.hoveredComp = null
     this.dragging = null
-    this.wireDraft = null
 
     for (const s of snap.components || []) {
       const item = LIBRARY.find((l) => l.key === s.defKey)

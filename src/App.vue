@@ -163,6 +163,8 @@ import { generateNetlist, solveCircuit } from './circuit/circuitCore.js'
 import { evaluateWiring } from './circuit/graphMatch.js'
 import { computeReadings } from './circuit/readings.js'
 import { gradeTier, referenceResistorValue } from './circuit/tieredGrade.js'
+import { checkWiringProcedure, checkSafety } from './circuit/procedure.js'
+import { trySnap } from './circuit/pinResolver.js'
 import AuthModal from './components/AuthModal.vue'
 import ServerModal from './components/ServerModal.vue'
 import {
@@ -263,6 +265,8 @@ const flowStep = ref(0)
 
 const score = ref(experiment.value.scoring.base)
 const errors = ref(0)
+/** 规程违规记录（带电操作等）：[{ op, voltage, penalty, time }] */
+const procedureViolations = ref([])
 const startTime = ref(Date.now())
 const now = ref(Date.now())
 const logs = ref([])
@@ -478,17 +482,51 @@ function onSceneReady(e) {
 }
 
 /**
- * 把一份实验配置装载进场景：清空 → 按配置摆预置元件 → 重置流程/计分/记录。
+ * 把一份实验配置装载进场景：清空 → 按配置摆预置元件 → 预接线 → 重置流程/计分/记录。
  * 切换实验与首次进入都走这里，保证状态复位逻辑只有一处。
+ *
+ * 配置的两个可选能力（接线工艺训练在用）：
+ *   scene.components[].snap = true   元件装载时直接吸附到孔位（"一台已接好的装置"）
+ *   scene.wires[] = [{ from, to }]   预接线；端点写法 { comp:'vs', pin:'V+' } 或 { hole:'F1-9' }
  */
 function applyExperiment(spec, { log = true } = {}) {
   if (!engine.value) return
   engine.value.clearAll()
+  const created = {} // defKey -> [comp]，供预接线解析 compId
   for (const item of spec.scene.components) {
-    addComponent(item.defKey, item.pos, { quiet: true })
+    const comp = addComponent(item.defKey, item.pos, { quiet: true })
+    if (!comp) continue
+    ;(created[item.defKey] ||= []).push(comp)
+    // snap: true 的元件进场即插稳（默认不吸附，保持"元件散放、学生自己插"的原行为）
+    if (item.snap) {
+      const s = trySnap(comp.group, comp.def, engine.value.holes, engine.value.boardWorld)
+      if (s.snapped) {
+        comp.group.position.add(s.offset)
+        comp.state.placements = s.placements
+        comp.group.updateMatrixWorld(true)
+      }
+    }
+  }
+  // 预接线（如"一台接错了的装置"）：装载即存在，不算学生操作、不进历史
+  for (const w of spec.scene.wires || []) {
+    const resolveEnd = (e) => {
+      if (e.hole) {
+        const h = engine.value.holes.find((x) => x.id === e.hole)
+        return h ? { kind: 'hole', holeId: h.id, label: h.label, boardId: h.boardId } : null
+      }
+      if (e.comp) {
+        const comp = (created[e.comp] || [])[e.index || 0]
+        return comp ? { kind: 'pin', compId: comp.id, pin: e.pin } : null
+      }
+      return null
+    }
+    const from = resolveEnd(w.from)
+    const to = resolveEnd(w.to)
+    if (from && to) engine.value.addWire(from, to)
   }
 
   errors.value = 0
+  procedureViolations.value = []
   score.value = spec.scoring.base
   solved.value = false
   circuitOk.value = false
@@ -505,7 +543,7 @@ function applyExperiment(spec, { log = true } = {}) {
   stateTick.value++
 
   loadLocalRecords() // 按新实验的 key 取回本地记录
-  resetHistory()     // 预置元件不算历史，撤销不会把初始元件撤没
+  resetHistory()     // 预置元件与预接线是装载的一部分，撤销不会把它们撤没
 
   if (log) pushLog(`[实验] 载入「${spec.title}」`, 'ok')
   showPreview()
@@ -520,7 +558,7 @@ function startExperiment(id) {
 }
 
 function addComponent(key, posOverride, { quiet = false } = {}) {
-  if (!engine.value) return
+  if (!engine.value) return null
   // 手动添加时的默认摆放位置（预置元件会自带位置，走 posOverride）
   const positions = {
     vs: { x: -0.75, y: 0.72, z: 0.28 },
@@ -535,9 +573,10 @@ function addComponent(key, posOverride, { quiet = false } = {}) {
   selectedComp.value = comp
   stateTick.value++
   // 预置元件是装载实验的一部分：不弹提示、不单独记历史（随后 resetHistory 统一处理）
-  if (quiet) return
+  if (quiet) return comp
   recordChange()
   showToast(`已添加 ${comp.def.name}，拖动到面包板孔位上方松手自动吸附`, 'ok')
+  return comp
 }
 
 /**
@@ -583,9 +622,36 @@ function onWireCreated(wire) {
     `[导线] ${engine.value.describeEndpoint(wire.from)} → ${engine.value.describeEndpoint(wire.to)}`,
     'ok'
   )
+  checkProcedure('接线')
   recordChange()
   // 有导线变化后，如果已经计算过则重新计算
   if (solved.value) runAnalysis(true)
+}
+
+/**
+ * 规程判分：一次改接线动作（接线/拔线/删线/复接）发生时检查是否带电操作。
+ * 电源输出取自 sourceVoltage（实时反映恒压源当前值），超过实验配置的断电阈值即记违规。
+ * 没有 procedure 段的实验，checkWiringProcedure 返回 null，本函数不产生任何副作用。
+ */
+function checkProcedure(op) {
+  const res = checkWiringProcedure(experiment.value, {
+    sourceVoltage: sourceVoltage.value,
+    op,
+  })
+  if (!res) return
+  pushLog(`[规程] ${res.message}`, res.violated ? 'err' : 'ok')
+  if (res.violated) {
+    procedureViolations.value.push({
+      op,
+      voltage: sourceVoltage.value,
+      threshold: res.threshold,
+      message: res.message,
+      time: Date.now(),
+    })
+    score.value = Math.max(0, score.value - res.penalty)
+    errors.value += 1
+    showToast(`⚠ 带电${op}！扣 ${res.penalty} 分`, 'err')
+  }
 }
 
 /* ================= 导线：选中与单独删除 ================= */
@@ -607,6 +673,7 @@ function onWireRemove() {
   if (!engine.value.removeSelectedWire()) return
   selectedWire.value = null
   pushLog(`[删除导线] ${w.id}  ${label}`, 'ok')
+  checkProcedure('拔线')
   showToast(`已删除导线 ${w.id}，可点「撤销」或 Ctrl+Z 恢复`, 'ok')
   recordChange()
   // 拓扑变了，已算过的结果要重算
@@ -622,6 +689,7 @@ function onWireErase(wire) {
   if (!eng.eraseWire(wire)) return
   selectedWire.value = null
   pushLog(`[删除导线] ${id}  ${label}`, 'ok')
+  checkProcedure('拔线')
   showToast(`已删除导线 ${id}，可点「撤销」恢复`, 'ok')
   recordChange()
   if (solved.value) runAnalysis(true)
@@ -680,6 +748,8 @@ function setSelectedValue(v) {
     const knob = c.group.userData.knob
     if (knob) knob.rotation.y = ((c.def.maxValue - c.state.value) / c.def.maxValue) * Math.PI * 1.8
   }
+  // 电阻色环跟随阻值（外观即参数）
+  c.group.userData.setBands?.(c.state.value)
   pushLog(`[参数] ${c.def.name} 设为 ${c.state.value}${c.def.unit || ''}`)
   stateTick.value++
   recordValueChange()
@@ -831,6 +901,19 @@ async function runAnalysis(silent = false) {
     `[结果] U(R2) = ${voltR2.value.toFixed(3)} V ｜ I = ${(currentI.value * 1000).toFixed(3)} mA`,
     'ok'
   )
+
+  // 7) 安全规程检查：本实验若声明了 safety 段（如 LED 过流会烧毁），求解后立即校验。
+  //    测得电流来自 measurements 指定的保护支路（接线工艺训练里就是 LED 支路）。
+  const safety = checkSafety(experiment.value, { current: meters.i })
+  if (safety?.violated) {
+    pushLog(`[安全] ${safety.message}`, 'err')
+    if (!silent) {
+      errors.value += 1
+      score.value = Math.max(0, score.value - (experiment.value.safety?.penalty ?? experiment.value.scoring.errorPenalty))
+      showToast(safety.message, 'err')
+    }
+  }
+
   pushLog('━━━━ 分析完成 ━━━━', 'ok')
 
   refreshTier(sol.ok)
@@ -1156,6 +1239,7 @@ function submitReport() {
     records: records.value,
     wireCount: engine.value.wires.length,
     errors: errors.value,
+    procedureViolations: procedureViolations.value,
     timeText: timeText.value,
     grade: stars === 3 ? '优秀' : stars === 2 ? '良好' : '合格',
     netlistPreview: netlistText.value.split('\n').slice(0, 12).join('\n'),
@@ -1178,28 +1262,11 @@ function submitReport() {
 /* ================= 重置 ================= */
 function resetAll() {
   reportVisible.value = false
-  engine.value?.clearAll()
-  score.value = experiment.value.scoring.base
-  errors.value = 0
-  records.value = []
-  startTime.value = Date.now()
-  flowStep.value = 0
-  solved.value = false
-  circuitOk.value = false
-  shorts.value = []
-  voltR2.value = 0
-  currentI.value = 0
-  netlistText.value = ''
-  selectedComp.value = null
-  selectedWire.value = null
-  wiring.value = null
-  logs.value = []
+  // 重置 = 重新装载当前实验配置（预置元件、预接线、流程、计分、规程记录全部复位）。
+  // 之前这里写死了 addComponent('vs'/'r1'/'r2'/'led')，LED 实验点重置会多出固定电阻，
+  // 现改为走 applyExperiment，保证"重置后场景"与"首次进入"完全一致。
+  applyExperiment(experiment.value, { log: false })
   pushLog('[重置] 实验已重置', 'warn')
-  addComponent('vs')
-  addComponent('r1')
-  addComponent('r2')
-  addComponent('led')
-  resetHistory()
   engine.value?.setMode('drag')
   showPreview()
 }

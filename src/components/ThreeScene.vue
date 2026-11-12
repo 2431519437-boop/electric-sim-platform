@@ -31,10 +31,11 @@
         </button>
       </div>
       <button class="home-btn" title="回到全景视角" @click="resetView">⌂ 全景</button>
-      <span class="ver">v3 三模式 · 双击画布复位</span>
+      <span class="ver">v4 手持导线 · 两点确认 · 可拔线改接</span>
       <div class="hint">
         <template v-if="mode === 'wire'">
-          依次点击 <b>两个引脚 / 孔位</b> 完成连线；点空白处可取消当前连线
+          点第一个 <b>引脚 / 孔位</b> 拿起导线（琥珀圈标记起点），预览线跟手；
+          对准第二个端点<b>再点一下</b>落定。点导线的<b>金属端头</b>可拔起改接；右键 / 点空白取消
         </template>
         <template v-else-if="mode === 'erase'">
           直接点击要删除的 <b>导线</b>，一下即删；误删可点顶部「撤销」或 Ctrl+Z
@@ -45,9 +46,17 @@
       </div>
     </div>
 
-    <!-- 导线草稿提示 -->
-    <div v-if="draftText" class="draft">
-      <span class="pulse"></span> 起点已选中：<b>{{ draftText }}</b> ，请点击第二个端点
+    <!-- 连线状态条：起点 + 当前对准的目标（点下去之前就知道会连到哪） -->
+    <div v-if="mode === 'wire' && (draftText || hoverText)" class="draft">
+      <span class="pulse"></span>
+      <template v-if="draftText">
+        起点：<b>{{ draftText }}</b>
+        <template v-if="hoverText">→ 目标：<b class="dst">{{ hoverText }}</b>（再点一下落定）</template>
+        <template v-else>→ 移动鼠标选择终点，点空白取消</template>
+      </template>
+      <template v-else>
+        对准 <b>{{ hoverText }}</b> 点击拿起导线 · 点导线金属端头可拔起改接
+      </template>
     </div>
 
     <!-- 选中导线：单独删除 -->
@@ -80,6 +89,8 @@ const emit = defineEmits([
   'wire-remove',
   'wire-erase',
   'wire-miss',
+  'wire-lift',
+  'wire-reattach',
   'state-change',
   'log',
 ])
@@ -87,6 +98,7 @@ const emit = defineEmits([
 const host = ref(null)
 const mode = ref('drag')
 const draftText = ref('')
+const hoverText = ref('')
 const selectedWire = ref(null)
 
 let engine = null
@@ -163,6 +175,17 @@ onMounted(() => {
     onWireDraft: (ep) => {
       draftText.value = ep ? engine.describeEndpoint(ep) : ''
     },
+    onEndpointHover: (desc) => {
+      hoverText.value = desc || ''
+    },
+    onWireLift: (wire, end) => {
+      emit('wire-lift', wire, end)
+      emit('state-change')
+    },
+    onWireReattach: (wire) => {
+      emit('wire-reattach', wire)
+      emit('state-change')
+    },
     onWireSelect: (wire) => {
       selectedWire.value = wire || null
       emit('wire-select', wire || null)
@@ -177,7 +200,10 @@ onMounted(() => {
     },
     onModeChange: (m) => {
       mode.value = m
-      if (m !== 'wire') draftText.value = ''
+      if (m !== 'wire') {
+        draftText.value = ''
+        hoverText.value = ''
+      }
     },
   })
 
@@ -396,6 +422,9 @@ defineExpose({ engine: () => engine, toggleMode })
 }
 .draft b {
   color: #fde68a;
+}
+.draft b.dst {
+  color: #86efac;
 }
 .pulse {
   width: 8px;

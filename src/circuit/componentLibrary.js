@@ -198,7 +198,27 @@ function buildVSRC(group, def) {
   }
 }
 
-/** 固定电阻：卧式轴向电阻（色环） */
+/** 固定电阻：卧式轴向电阻（四色环，颜色由真实阻值算出） */
+/** 色环颜色表（EIA 标准）：0 黑 1 棕 2 红 3 橙 4 黄 5 绿 6 蓝 7 紫 8 灰 9 白 */
+const BAND_COLORS = [0x111111, 0x7c4a1e, 0xd42a1e, 0xe8730c, 0xf5d90a, 0x2e9e44, 0x2563eb, 0x8b5cf6, 0x9ca3af, 0xf8fafc]
+const BAND_GOLD = 0xd4a017 // 误差环：±5% 金
+
+/** 阻值 → 四环颜色 [d1, d2, 倍率, 误差]（支持 10Ω ~ 91kΩ 教学范围） */
+export function resistorBandColors(value) {
+  let v = Math.max(1, Math.round(Number(value) || 1))
+  let exp = Math.floor(Math.log10(v))
+  let head = Math.round(v / Math.pow(10, Math.max(exp - 1, 0)))
+  // 进位兜底（如 999 → 100）：头两位最多 99
+  if (head > 99) {
+    head = Math.round(head / 10)
+    exp += 1
+  }
+  const d1 = Math.floor(head / 10)
+  const d2 = head % 10
+  const mult = Math.max(exp - 1, 0)
+  return [BAND_COLORS[d1], BAND_COLORS[d2], BAND_COLORS[mult] ?? BAND_COLORS[9], BAND_GOLD]
+}
+
 function buildRES(group, def) {
   const bodyMat = mat(0xd8c9a3, { roughness: 0.75, metalness: 0.05 })
   const body = shadow(new THREE.Mesh(new THREE.CylinderGeometry(0.078, 0.078, 0.36, 24), bodyMat))
@@ -206,21 +226,25 @@ function buildRES(group, def) {
   body.position.y = 0.04
   group.add(body)
 
-  // 色环：棕黑棕（200Ω → 20 × 10^1）
-  const bands = [
-    { x: -0.1, color: 0x7c4a1e },
-    { x: 0.0, color: 0x111111 },
-    { x: 0.1, color: 0x7c4a1e },
-  ]
-  for (const b of bands) {
+  // 四色环：前三环靠左（有效数字 + 倍率），金色误差环隔开靠右。
+  // 颜色跟随真实阻值（setBands），学生改参数时外观同步变化 —— 顺便教读色环。
+  const bandX = [-0.12, -0.05, 0.02, 0.13]
+  const bandMeshes = bandX.map((x) => {
     const ring = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.081, 0.081, 0.028, 24),
-      mat(b.color, { roughness: 0.8, metalness: 0.05 })
+      new THREE.CylinderGeometry(0.081, 0.081, x === 0.13 ? 0.024 : 0.03, 24),
+      mat(0x111111, { roughness: 0.8, metalness: 0.05 })
     )
     ring.rotation.z = Math.PI / 2
-    ring.position.set(b.x, 0.04, 0)
+    ring.position.set(x, 0.04, 0)
     group.add(ring)
+    return ring
+  })
+  const setBands = (v) => {
+    const colors = resistorBandColors(v)
+    bandMeshes.forEach((ring, i) => ring.material.color.setHex(colors[i]))
   }
+  group.userData.setBands = setBands
+  setBands(def.defaultValue ?? 200)
 
   // 两端金属帽
   for (const s of [-1, 1]) {
@@ -243,7 +267,7 @@ function buildRES(group, def) {
   }
 }
 
-/** 电位器：方形蓝色壳体 + 顶部可旋转旋钮（userData.knob） */
+/** 电位器：方形蓝色壳体 + 顶部可旋转旋钮（userData.knob）+ 刻度盘 */
 function buildRHEO(group, def) {
   const body = shadow(new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.26, 0.46), mat(0x2563eb, { roughness: 0.5 })))
   body.position.y = 0.06
@@ -256,6 +280,25 @@ function buildRHEO(group, def) {
   plate.position.y = 0.2
   group.add(plate)
 
+  // 刻度盘：270° 弧形排列的 11 条刻度 + 两端 MIN/MAX 色点，
+  // 旋钮指针对着刻度，调阻值时"转了多少"一眼可见
+  const tickMat = mat(0x1f2937, { roughness: 0.6, metalness: 0.1 })
+  for (let i = 0; i <= 10; i++) {
+    const a = (-225 + i * 27) * (Math.PI / 180) // -225° ~ +45°，共 270°
+    const tick = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.006, i % 5 === 0 ? 0.045 : 0.028), tickMat)
+    tick.position.set(Math.sin(a) * 0.205, 0.196, Math.cos(a) * 0.205)
+    tick.rotation.y = a
+    group.add(tick)
+  }
+  const dotMin = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 8), mat(0x2563eb))
+  const dotMax = new THREE.Mesh(new THREE.SphereGeometry(0.014, 8, 8), mat(0xdc2626, { roughness: 0.4 }))
+  const aMin = -225 * (Math.PI / 180)
+  const aMax = 45 * (Math.PI / 180)
+  dotMin.position.set(Math.sin(aMin) * 0.205, 0.196, Math.cos(aMin) * 0.205)
+  dotMax.position.set(Math.sin(aMax) * 0.205, 0.196, Math.cos(aMax) * 0.205)
+  group.add(dotMin)
+  group.add(dotMax)
+
   // 旋钮（绕 Y 轴旋转表示阻值变化）
   const knob = new THREE.Group()
   knob.position.set(0, 0.22, 0)
@@ -264,6 +307,10 @@ function buildRHEO(group, def) {
     mat(0xe2e8f0, { metalness: 0.5, roughness: 0.35 })
   )
   knob.add(disc)
+  // 白色指针线：指向刻度盘
+  const pointer = new THREE.Mesh(new THREE.BoxGeometry(0.018, 0.02, 0.15), mat(0xdc2626, { roughness: 0.4 }))
+  pointer.position.set(0, 0.058, -0.075)
+  knob.add(pointer)
   const slot = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.02, 0.22), mat(0x1f2937, { metalness: 0.1 }))
   slot.position.y = 0.06
   knob.add(slot)
@@ -314,6 +361,23 @@ function buildLED(group, def) {
   wall.position.y = 0.05
   group.add(wall)
   group.userData.dome = dome
+
+  // 阴极平边：真实 LED 灯罩外沿在阴极一侧有一个平面缺口，是识别极性的标志。
+  // pins 里 K（阴极）在 +x 一侧，平边就做在 +x 的底座边缘上。
+  const flatSpot = new THREE.Mesh(
+    new THREE.BoxGeometry(0.03, 0.05, 0.12),
+    mat(0x9aa5b1, { metalness: 0.2, roughness: 0.6 })
+  )
+  flatSpot.position.set(0.118, 0.045, 0)
+  group.add(flatSpot)
+  // 阴极引脚根部的银色短环（辅助识别，实物上对应短脚一侧）
+  const kBand = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.018, 0.018, 0.03, 10),
+    mat(0x94a3b8, { metalness: 0.85, roughness: 0.3 })
+  )
+  kBand.rotation.z = Math.PI / 2
+  kBand.position.set(0.14, 0.03, 0)
+  group.add(kBand)
 
   // 发光点光源（强度为 0 时不影响画面）
   const light = new THREE.PointLight(0xff3b30, 0, 2.2, 2)

@@ -79,6 +79,20 @@
             </div>
           </div>
 
+          <!-- 操作规程违规记录（接线工艺训练类实验） -->
+          <div v-if="report.procedureViolations && report.procedureViolations.length" class="sec-title warn-title">
+            操作规程违规记录（带电操作）
+          </div>
+          <div v-if="report.procedureViolations && report.procedureViolations.length" class="proc-list">
+            <div v-for="(v, i) in report.procedureViolations" :key="i" class="proc-item">
+              <span class="ci">⚠</span>
+              <div>
+                <div class="proc-op">第 {{ i + 1 }} 次：{{ v.op }} 时电源输出 {{ Number(v.voltage || 0).toFixed(1) }}V</div>
+                <div class="proc-msg">{{ v.message }}</div>
+              </div>
+            </div>
+          </div>
+
           <!-- 数据表 -->
           <div class="sec-title">测量数据与理论对比</div>
           <table class="data">
@@ -146,6 +160,7 @@ const props = defineProps({
       netlistPreview: '',
       wiringOk: false,
       wiringText: '',
+      procedureViolations: [],
       // 分级判分相关
       rawScore: 0,
       tier: '',
@@ -403,6 +418,40 @@ function errClass(r) {
   color: #164a7a;
   padding-left: 9px;
   border-left: 3px solid #2b7fd4;
+}
+
+.warn-title {
+  color: #9a3412;
+  border-left-color: #dc2626;
+}
+
+.proc-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.proc-item {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  font-size: 11.5px;
+}
+.proc-item .ci {
+  color: #dc2626;
+  flex: none;
+}
+.proc-op {
+  font-weight: 700;
+  color: #9a3412;
+}
+.proc-msg {
+  color: #7f1d1d;
+  line-height: 1.5;
+  margin-top: 2px;
 }
 
 .data {
