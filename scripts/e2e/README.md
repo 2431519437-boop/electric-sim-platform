@@ -29,6 +29,7 @@ node scripts/e2e/undo.test.mjs     # 删除导线后撤销
 node scripts/e2e/erase.test.mjs    # 三模式切换 + 删除灵敏度（屏幕空间拾取）
 node scripts/e2e/hint.test.mjs     # 「使用提示」按实验配置给文案
 node scripts/e2e/led.test.mjs      # 第三个实验（LED 限流）装载与数据表
+node scripts/e2e/craft.test.mjs    # 第四个实验（接线工艺训练）装载、预接线、预插孔位
 node scripts/e2e/tier.test.mjs     # 分级判分：档位、折算、等效电路
 node scripts/e2e/mobile.test.mjs   # 移动端布局：竖屏/横屏/平板不重叠、按钮不被遮挡
 node scripts/e2e/ux.test.mjs       # 可用性：状态三态、R2 滑块、引脚脉动、点空提示
