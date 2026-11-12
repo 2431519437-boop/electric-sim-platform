@@ -31,6 +31,14 @@
         </button>
       </div>
       <button class="home-btn" title="回到全景视角" @click="resetView">⌂ 全景</button>
+      <button
+        class="home-btn fp-btn"
+        :class="{ on: viewMode === 'firstPerson' }"
+        title="第一人称操作视角：低头看自己双手在面包板上拿线、拔线、接线"
+        @click="toggleFirstPerson"
+      >
+        👁 {{ viewMode === 'firstPerson' ? '操作视角' : '第一人称' }}
+      </button>
       <span class="ver">v4 手持导线 · 两点确认 · 可拔线改接</span>
       <div class="hint">
         <template v-if="mode === 'wire' && lifting">
@@ -127,6 +135,8 @@ const hoverText = ref('')
 const selectedWire = ref(null)
 /** 是否处于"拔线手持中"（拿起了导线端头） */
 const lifting = ref(false)
+/** 视角模式：overview 俯视全景 / firstPerson 第一人称操作视角 */
+const viewMode = ref('overview')
 
 let engine = null
 let observer = null
@@ -156,7 +166,14 @@ function setMode(m) {
 }
 
 function resetView() {
-  engine?.resetView()
+  viewMode.value = 'overview'
+  engine?.setViewMode('overview')
+}
+
+/** 切换第一人称操作视角：低头看自己双手在面包板上操作 */
+function toggleFirstPerson() {
+  viewMode.value = viewMode.value === 'firstPerson' ? 'overview' : 'firstPerson'
+  engine?.setViewMode(viewMode.value)
 }
 
 function onKey(e) {
@@ -351,6 +368,13 @@ defineExpose({ engine: () => engine, toggleMode })
   color: #eaf3ff;
   background: rgba(23, 48, 82, 0.92);
   border-color: rgba(125, 211, 252, 0.45);
+}
+/* 第一人称切换：开启时高亮，提示"现在是我在操作"的视角 */
+.fp-btn.on {
+  color: #062f2b;
+  background: linear-gradient(135deg, #22d3ee, #34d399);
+  border-color: rgba(34, 211, 238, 0.9);
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.45);
 }
 .ver {
   font-size: 10.5px;

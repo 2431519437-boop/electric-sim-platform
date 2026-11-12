@@ -40,7 +40,7 @@ const ROOT = path.resolve(__dirname, '..')
 const DIST = path.join(ROOT, 'dist')
 
 const PORT = Number(process.env.PORT || 3001)
-const HOST = process.env.HOST || '127.0.0.1'
+const HOST = process.env.HOST || '0.0.0.0'
 const MAX_BODY = 4 * 1024 * 1024
 
 const MIME = {

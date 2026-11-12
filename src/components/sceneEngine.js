@@ -137,8 +137,11 @@ export class SceneEngine {
     this.resize()
     // 初始取景：把整块面包板框进视野中央
     this.frameBoard()
-    // 用户一旦手动操作视角，就不再自动重取景
-    this.controls.addEventListener('start', () => (this.userMoved = true))
+    // 用户一旦真正拖动视角（位移超过阈值），就不再自动干预取景。
+    // 注意：不能用 controls 的 'start' —— 它在"点击孔位连线"时也会触发，
+    // 会让连线焦点逻辑刚生效就失效。改为在 _onPointerMove 里按位移判定。
+    this._downX = null
+    this._downY = null
 
     this._loop()
   }
@@ -174,6 +177,22 @@ export class SceneEngine {
 
   /** 把整块面包板（含元件、双手）完整框进视野，并尽量占满屏幕 */
   frameBoard() {
+    // 第一人称模式下，"重新取景"应保持操作视角，而不是被打回俯视全景
+    // （窗口 resize 会触发这里，若不拦就会把第一人称视角冲掉）
+    if (this.viewMode === 'firstPerson') {
+      this._applyFirstPerson()
+      return
+    }
+    // 回到全景：恢复默认视野与视角约束
+    if (this.camera.fov !== 45) {
+      this.camera.fov = 45
+      this.camera.updateProjectionMatrix()
+    }
+    this.controls.minPolarAngle = Math.PI * 0.13
+    this.controls.maxPolarAngle = Math.PI * 0.44
+    this.controls.minAzimuthAngle = -Math.PI * 0.2
+    this.controls.maxAzimuthAngle = Math.PI * 0.2
+
     const aspect = this.camera.aspect || 1.5
     const portrait = aspect < 0.95
 
@@ -235,6 +254,8 @@ export class SceneEngine {
     measure(dist) // 用最终参数再摆一次相机
 
     this.controls.target.copy(center)
+    // 记录全景注视点：连线焦点模式结束后缓动回这里
+    this._homeTarget = center.clone()
 
     // 缩放范围：必须允许学生自己拉近看孔位。
     // 早先限制成 dist×0.95（只能拉近 5%），手机横屏时板子本来就只有屏宽四成，
@@ -251,6 +272,39 @@ export class SceneEngine {
     this.userMoved = false
     this.frameBoard()
   }
+
+  /**
+   * 视角模式切换：
+   *  - 'overview'   俯视全景，看得到整块面包板与全部接线（默认，便于判读电路）
+   *  - 'firstPerson' 第一人称操作视角：相机降到"学生低头看自己双手在面包板上操作"的位置，
+   *                  双手放大成前景中的"自己的手"——这正是老师要的"人手里拿一根线"的观感。
+   */
+  setViewMode(mode) {
+    this.viewMode = mode === 'firstPerson' ? 'firstPerson' : 'overview'
+    this.userMoved = false
+    if (this.viewMode === 'firstPerson') this._applyFirstPerson()
+    else this.frameBoard()
+    return this.viewMode
+  }
+
+  /** 第一人称机位：站在板子前缘、低头看双手操作（俯角约 33°，能看清孔位又不至于贴在板上） */
+  _applyFirstPerson() {
+    const size = boardSize()
+    // 眼睛在板前上方，低头看板面；比"鼻子贴板"高得多，也远得多
+    this.camera.position.set(0, 1.35, Math.max(size.depth * 0.72, 1.9))
+    this.controls.target.set(0, 0.02, -size.depth * 0.08)
+    // 近距离操作：允许小幅环顾（转头），但别把板子转出视野
+    this.controls.minDistance = 0.4
+    this.controls.maxDistance = 3.6
+    this.controls.minPolarAngle = Math.PI * 0.05
+    this.controls.maxPolarAngle = Math.PI * 0.47
+    this.controls.minAzimuthAngle = -Math.PI * 0.4
+    this.controls.maxAzimuthAngle = Math.PI * 0.4
+    this.camera.fov = 50 // 近距离用稍广的视野，手和板面都在画面里
+    this.camera.updateProjectionMatrix()
+    this.controls.update()
+  }
+
 
   /* ================= 实验员的双手 ================= */
   /**
@@ -342,12 +396,12 @@ export class SceneEngine {
 
     const size = boardSize()
 
-    // 操作手（右）：指尖朝前下方（伸向镜头），掌心朝下，随鼠标移动
+    // 操作手（右）：从画面前上方俯身伸下来，手指朝下前、掌心朝板面（"俯身操作"姿态）
     this.handR = makeHand()
     this.handR.position.set(1.15, 0.46, 0.36)
-    this.handR.rotation.set(0.4, Math.PI, -0.06)
+    this.handR.rotation.set(0.72, Math.PI, -0.06)
     this.handR.scale.setScalar(1.12)
-    this.handR.userData.baseRot = new THREE.Euler(0.4, Math.PI, -0.06)
+    this.handR.userData.baseRot = new THREE.Euler(0.72, Math.PI, -0.06)
     this.scene.add(this.handR)
 
     // 扶板手（左）：压在板子左端，指尖朝 +X 伸向板面
@@ -436,37 +490,95 @@ export class SceneEngine {
     if (!this.handR || !this.handL) return
     const k = 1 - Math.exp(-Math.min(dt, 0.05) * 10)
 
-    // ---- 目标落点：拖拽时抓元件，否则跟鼠标 ----
+    // ---- 目标落点：拖拽时抓元件，连线/拔线时贴到"手里那根线的线头"上，否则跟鼠标 ----
     let target
     if (this.dragging) {
       target = this.dragging.group.position.clone()
       target.y = 0.36
       target.z -= 0.14
+    } else if (this.mode === 'wire' && (this.wireDraft || this.editing)) {
+      // 连线/拔线：手就是"捏着线的那只手"，落在手持端上方，与镊子、线头三者对齐
+      const hp = this._heldPoint()
+      if (hp) {
+        target = hp.clone()
+        // 第一人称：手在操作点稍后上方（手指朝前伸向板面）；
+        // 全景俯视：手在操作点上方（手指朝下按向板面）。偏移方式不同。
+        // 注意：偏移量随手的缩放同步收小 —— 手缩到 0.62 后指尖离掌心只有
+        // 约 0.17，偏移若还按旧值给，指尖就够不到线头了。
+        // 关键：手要抬到落点上方足够高。第一人称是俯视机位，手若贴着板面，
+        // 在屏幕上就会正压在落点孔位上、把"线接到哪"挡住。抬高后手在上、
+        // 落点在下方，两者在画面里分开，学生能看清落点。
+        if (this.viewMode === 'firstPerson') {
+          target.y += 0.13
+          target.z += 0.03
+          target.x += 0.1
+        } else {
+          target.y += 0.16
+          target.z -= 0.06
+        }
+      } else {
+        target = new THREE.Vector3(1.15, 0.46, 0.22)
+      }
     } else if (this.pointerOnBoard) {
       target = this.pointerOnBoard.clone()
       target.y = 0.44
       target.z -= 0.15
     } else {
-      target = new THREE.Vector3(1.15, 0.46, 0.22)
+      // 没有鼠标时手的待机位：第一人称下放在画面右下方（像"自己的手悬在板前待命"），
+      // 不占板中央，避免遮挡孔位
+      target =
+        this.viewMode === 'firstPerson'
+          ? new THREE.Vector3(0.72, 0.34, 0.42)
+          : new THREE.Vector3(1.15, 0.46, 0.22)
     }
     this.handR.position.lerp(target, k)
     this.handR.position.y += Math.sin(t * 2.2) * 0.006
 
+    // 手的大小要克制：第一人称机位离板面很近，手一大就会盖住孔位和导线走向，
+    // 学生反而看不清自己接的线落在哪。这里按"能看清导线"优先，把手收到 0.62。
+    // 连线/拔线时只轻微放大（1.06），保持"在操作"的存在感而不遮挡。
+    const wireHeld = this.mode === 'wire' && (this.wireDraft || this.editing)
+    const baseScale = this.viewMode === 'firstPerson' ? 0.62 : 1.12
+    const wantScale = wireHeld ? baseScale * 1.06 : baseScale
+    const s = this.handR.scale.x + (wantScale - this.handR.scale.x) * k
+    this.handR.scale.setScalar(s)
+    // 左手同频缩小（第一人称下同样只是"搭在板边"的存在，不抢画面）
+    const wantLScale = this.viewMode === 'firstPerson' ? 0.6 : 1.05
+    const ls = this.handL.scale.x + (wantLScale - this.handL.scale.x) * k
+    this.handL.scale.setScalar(ls)
+
     // ---- 抓握程度 ----
-    const wantGrab = this.dragging ? 1 : this.hoveredComp ? 0.45 : 0.16
+    // 连线/拔线时必须真的"捏起来"：手指张开摊在板上的话，既不像在拿线，
+    // 也会因为掌心平压而遮住落点孔位。
+    const wantGrab = this.dragging ? 1 : wireHeld ? 0.78 : this.hoveredComp ? 0.45 : 0.16
     this.grabAmount += (wantGrab - this.grabAmount) * k
     this._setHandCurl(this.handR, this.grabAmount)
 
     const base = this.handR.userData.baseRot
-    this.handR.rotation.x = base.x - this.grabAmount * 0.12
+    // 第一人称下：handR.rotation.y = PI 已把手指从 -Z 翻到 +Z（朝向镜头/板面），
+    // rotation.x 取正值才让这只手"指尖朝下伸向板面"；取负会翻成掌心朝天，
+    // 变成张开巴掌的怪姿态。捏线时俯得更深，待机时略放松。
+    const fpPitch = wireHeld ? 1.2 : 0.62
+    const baseRotX = this.viewMode === 'firstPerson' ? fpPitch : base.x
+    this.handR.rotation.x = baseRotX - this.grabAmount * 0.12
     this.handR.rotation.z = base.z + this.grabAmount * 0.06
     this.handR.rotation.y = base.y + Math.sin(t * 0.9) * 0.02
 
     // ---- 左手：扶板 + 配合下压 ----
+    // 第一人称视角下手已经缩到 0.62，左手若还摆在板边会显得像"另一只大手"，
+    // 且本身也在画面外——直接隐藏，画面里只保留正在操作的那只手，最干净。
+    this.handL.visible = this.viewMode !== 'firstPerson'
     const lb = this.handL.userData.baseRot
     this.handL.rotation.x = lb.x + Math.sin(t * 1.3) * 0.012 + this.grabAmount * 0.05
     this.handL.rotation.y = lb.y + Math.sin(t * 0.8) * 0.015
-    this.handL.position.y = 0.2 + Math.sin(t * 1.6) * 0.005
+    if (this.viewMode === 'firstPerson') {
+      // 第一人称下左手已隐藏，这里只需保持它在画面外，不再做"伸进来"的动画
+      this.handL.position.set(-boardSize().width / 2 - 0.3, 0.2, 0.3)
+    } else {
+      this.handL.position.x += (-boardSize().width / 2 - 0.06 - this.handL.position.x) * k
+      this.handL.position.z += (0 - this.handL.position.z) * k
+    }
+    this.handL.position.y = (this.viewMode === 'firstPerson' ? 0.2 : 0.2) + Math.sin(t * 1.6) * 0.005
     this._setHandCurl(this.handL, 0.12 + this.grabAmount * 0.16)
 
     // ---- 指尖落点指示环 ----
@@ -482,6 +594,30 @@ export class SceneEngine {
     this._updateTweezers(t, dt)
   }
 
+  /**
+   * 当前"手上捏着的那个点"（世界坐标）。
+   * 拔线改接时 = 被拔起端头的位置；连线时 = 吸附端点或指尖落点。
+   * 手、镊子、预览线头三者都对齐到它，才能呈现"手捏着一根线"的统一画面。
+   */
+  _heldPoint() {
+    if (this.editing) {
+      const { wire, end } = this.editing
+      const tip = end === 'from' ? wire.tipA : wire.tipB
+      if (tip) return tip.position.clone()
+    }
+    const hover = this.hoverEndpoint
+    if (hover && this.wireDraft && JSON.stringify(hover) !== JSON.stringify(this.wireDraft)) {
+      const p = this.endpointPosition(hover)
+      if (p) return p.clone()
+    }
+    if (this.pointerOnBoard) {
+      const p = this.pointerOnBoard.clone()
+      p.y = Math.max(p.y, 0.02)
+      return p
+    }
+    return null
+  }
+
   /** 每帧更新镊子：仅在连线/拔线模式下可见，跟随"手持端"，张合夹持导线的端头 */
   _updateTweezers(t, dt) {
     if (!this.tweezers) return
@@ -492,17 +628,11 @@ export class SceneEngine {
     this.tweezers.visible = show
     if (!show) return
 
-    // 夹持位置 = "手持端"（拔线中被提起的端头 / 新连线的预览端）
-    let holdPos = null
-    if (this.editing) {
-      const { wire, end } = this.editing
-      const tip = end === 'from' ? wire.tipA : wire.tipB
-      if (tip) holdPos = tip.position.clone()
-    } else if (this.pointerOnBoard) {
-      holdPos = this.pointerOnBoard.clone()
-      holdPos.y = Math.max(holdPos.y, 0.02) + 0.05
-    }
-    if (!holdPos) return
+    // 夹持位置 = "手里那个线头"（与手、预览线头统一对齐）
+    const hp = this._heldPoint()
+    if (!hp) return
+    const holdPos = hp.clone()
+    holdPos.y += 0.03
 
     // 镊子尖端精确落在端头球上方，镊子身体斜向上后方（朝镜头）
     // 尖端在局部坐标 z ≈ -0.18（放大 1.6 后约 -0.29）；把镊子整体放到"端头后上方"，
@@ -657,6 +787,34 @@ export class SceneEngine {
     this.draftMesh.visible = false
     this.draftMesh.raycast = () => {} // 预览线不参与拾取
     this.scene.add(this.draftMesh)
+
+    // 手持端端子：被捏在手里的那个"金属插头"，发光 + 外圈光晕。
+    // 老师要的是"人手里拿一根线"，光有线不够——线头得有个看得见的实体端子。
+    this.draftTip = new THREE.Mesh(
+      new THREE.SphereGeometry(0.033, 14, 12),
+      new THREE.MeshBasicMaterial({ color: 0xfde68a })
+    )
+    this.draftTip.visible = false
+    this.draftTip.raycast = () => {}
+    this.scene.add(this.draftTip)
+    this.draftTipGlow = new THREE.Mesh(
+      new THREE.SphereGeometry(0.062, 14, 12),
+      new THREE.MeshBasicMaterial({ color: 0xfbbf24, transparent: true, opacity: 0.3 })
+    )
+    this.draftTipGlow.visible = false
+    this.draftTipGlow.raycast = () => {}
+    this.scene.add(this.draftTipGlow)
+
+    // 手持线尾：从"捏着线的手"垂下来的一小截导线。
+    // 为什么需要它：预览线连的是"起点→目标"，两点很近时线短得几乎看不见，
+    // 于是"手里拿着一根线"就无从体现。这截固定长度的线尾保证手里**始终**有一根线。
+    this.handTail = new THREE.Mesh(
+      new THREE.BufferGeometry(),
+      new THREE.MeshBasicMaterial({ color: 0xf59e0b, transparent: true, opacity: 0.95 })
+    )
+    this.handTail.visible = false
+    this.handTail.raycast = () => {}
+    this.scene.add(this.handTail)
 
     // 板面丝印：列号 1~30、行标 F1~F5 / B1~B5、电源轨 +/−。
     // 控制台日志里的孔位（如"F1-12"）因此能在板子上被一眼找到。
@@ -911,7 +1069,17 @@ export class SceneEngine {
     // 弧高随距离自适应：越远拱得越高，但有上限
     const sag = Math.min(Math.max(dist * 0.22, 0.1), 0.55)
     const mid = a.clone().lerp(b, 0.5)
-    mid.y += sag
+    if (wire.lifted) {
+      // 手持态：一端被提在手里、一端还在孔里 —— 真实导线会**自然下垂**成 U 形，
+      // 而不是像弓一样向上拱。这是"人提着一根线"最关键的可信度来源。
+      mid.y -= Math.min(dist * 0.16, 0.16)
+      // 手提点略微外甩，避免下垂段和板面/元件穿插
+      mid.x += (a.x - b.x) * 0.04
+      mid.z += (a.z - b.z) * 0.04
+    } else {
+      // 两端都在孔里：面包板上的导线通常轻拱，避免贴板短路
+      mid.y += sag
+    }
     const ctrl1 = a.clone().lerp(mid, 0.55)
     const ctrl2 = b.clone().lerp(mid, 0.55)
     const curve = new THREE.CatmullRomCurve3([a, ctrl1, mid, ctrl2, b])
@@ -1046,6 +1214,8 @@ export class SceneEngine {
 
   _onPointerDown(e) {
     this._setPointer(e)
+    this._downX = e.clientX
+    this._downY = e.clientY
 
     // 右键：连线模式下先取消半截连线；否则旋转选中元件（或悬停元件）
     if (e.button === 2) {
@@ -1109,6 +1279,13 @@ export class SceneEngine {
   _onPointerMove(e) {
     this._setPointer(e)
     this._updatePointerOnBoard()
+
+    // 真正拖动视角（位移 > 8px）才标记 userMoved；连线时的移动是"拿着线走"，不算
+    if (this._downX != null && this.mode !== 'wire') {
+      if (Math.hypot(e.clientX - this._downX, e.clientY - this._downY) > 8) {
+        this.userMoved = true
+      }
+    }
 
     // 连线模式：把高亮环套在"这一下会点到的端点"上，学生才知道要往哪点
     if (this.mode === 'wire' && !this.dragging && !this.rotating) {
@@ -1373,6 +1550,9 @@ export class SceneEngine {
     this.wireDraft = null
     if (this.draftMarker) this.draftMarker.visible = false
     if (this.draftMesh) this.draftMesh.visible = false
+    if (this.draftTip) this.draftTip.visible = false
+    if (this.draftTipGlow) this.draftTipGlow.visible = false
+    if (this.handTail) this.handTail.visible = false
     this.hooks.onWireDraft?.(null)
   }
 
@@ -1595,16 +1775,51 @@ export class SceneEngine {
       return
     }
     b = b.clone()
+    // 线头被提在手里：略高于板面，才谈得上"提着一根线"
+    b.y += 0.12
     const dist = a.distanceTo(b)
-    const sag = Math.min(Math.max(dist * 0.26, 0.12), 0.6)
+    // 真实导线被提在手里时是自然下垂的弧度（不是向上拱的弓形）。
+    // 下垂量刻意收着，保证既看得出"软线"的垂坠，又不会穿到面包板下面。
+    const sag = Math.min(Math.max(dist * 0.12, 0.05), 0.11)
     const mid = a.clone().lerp(b, 0.5)
-    mid.y += sag
+    mid.y = Math.max(mid.y - sag, 0.015)
+    // 中段再向两侧微甩，制造"软线被提着时左右晃动"的自然感
+    mid.x += (a.x - b.x) * 0.05
+    mid.z += (a.z - b.z) * 0.05
     const c1 = a.clone().lerp(mid, 0.5)
     const c2 = b.clone().lerp(mid, 0.55)
     const curve = new THREE.CatmullRomCurve3([a, c1, mid, c2, b])
     this.draftMesh.geometry.dispose()
-    this.draftMesh.geometry = new THREE.TubeGeometry(curve, 28, WIRE_RADIUS * 1.15, 6, false)
+    // 比落定导线更粗一档 + 琥珀色，让"手里这根线"在画面里一眼可见
+    this.draftMesh.geometry = new THREE.TubeGeometry(curve, 32, WIRE_RADIUS * 2.1, 8, false)
     this.draftMesh.visible = true
+
+    // 端子落在"线头"上：与手、镊子对齐，形成"捏着线头"的实体焦点
+    if (this.draftTip) {
+      this.draftTip.visible = true
+      this.draftTip.position.copy(b)
+    }
+    if (this.draftTipGlow) {
+      this.draftTipGlow.visible = true
+      this.draftTipGlow.position.copy(b)
+      this.draftTipGlow.scale.setScalar(1 + Math.sin(performance.now() * 0.006) * 0.12)
+    }
+
+    // 手里垂下的那一小截线尾：让"手捏着一根线"在任何起点距离下都成立
+    if (this.handTail) {
+      this.handTail.visible = true
+      const p0 = b.clone()
+      const p1 = b.clone()
+      p1.y -= 0.075
+      p1.x += 0.015
+      const p2 = b.clone()
+      p2.y -= 0.155
+      p2.x += 0.045
+      p2.z += 0.02
+      const tailCurve = new THREE.CatmullRomCurve3([p0, p1, p2])
+      this.handTail.geometry.dispose()
+      this.handTail.geometry = new THREE.TubeGeometry(tailCurve, 12, WIRE_RADIUS * 1.5, 6, false)
+    }
 
     // 拔线手持态：被拔起的端头球跟随"手持端"悬空，导线本体跟着橡皮筋拉伸。
     // 这样"拿在手里的那根线"始终可见，而不是隐身成一条预览线。
@@ -1802,6 +2017,10 @@ export class SceneEngine {
         }
       }
     })
+
+    // 注：不做自动镜头干预。试过"跟随操作点 + 拉近"，
+    // 但 controls.target 一变就会带着视线偏移、构图被打乱，反而看不清板面。
+    // 视角交给学生自己用滚轮/拖拽控制，更稳定。
 
     this.controls.update()
 
