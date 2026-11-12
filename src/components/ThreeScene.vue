@@ -33,9 +33,14 @@
       <button class="home-btn" title="回到全景视角" @click="resetView">⌂ 全景</button>
       <span class="ver">v4 手持导线 · 两点确认 · 可拔线改接</span>
       <div class="hint">
-        <template v-if="mode === 'wire'">
-          点第一个 <b>引脚 / 孔位</b> 拿起导线（琥珀圈标记起点），预览线跟手；
-          对准第二个端点<b>再点一下</b>落定。点导线的<b>金属端头</b>可拔起改接；右键 / 点空白取消
+        <template v-if="mode === 'wire' && lifting">
+          🔌 <b>拔线中</b>：已把导线端头拿在手里（半透明高亮跟随）。对准新 <b>孔位 / 引脚</b> 点一下复接；点空白放回原位
+        </template>
+        <template v-else-if="mode === 'wire' && draftText">
+          🔌 <b>拿线中</b>：起点已拿起，预览线跟手。对准第二个 <b>引脚 / 孔位</b> 再点一下落定；点空白取消
+        </template>
+        <template v-else-if="mode === 'wire'">
+          🔌 <b>拿线</b>：点第一个 <b>引脚 / 孔位</b> 拿起导线；点导线的 <b>金属端头</b> 可拔起改接（拽线身会扣分）
         </template>
         <template v-else-if="mode === 'erase'">
           直接点击要删除的 <b>导线</b>，一下即删；误删可点顶部「撤销」或 Ctrl+Z
@@ -47,9 +52,12 @@
     </div>
 
     <!-- 连线状态条：起点 + 当前对准的目标（点下去之前就知道会连到哪） -->
-    <div v-if="mode === 'wire' && (draftText || hoverText)" class="draft">
+    <div v-if="mode === 'wire' && (draftText || hoverText || lifting)" class="draft">
       <span class="pulse"></span>
-      <template v-if="draftText">
+      <template v-if="lifting">
+        🖐 拔线手持：导线端头已提起（<b class="dst">半透明跟随</b>）→ 对准新位置点一下复接
+      </template>
+      <template v-else-if="draftText">
         起点：<b>{{ draftText }}</b>
         <template v-if="hoverText">→ 目标：<b class="dst">{{ hoverText }}</b>（再点一下落定）</template>
         <template v-else>→ 移动鼠标选择终点，点空白取消</template>
@@ -72,6 +80,23 @@
 
     <!-- 视角提示 -->
     <div v-if="!selectedWire" class="viewer-tip">左键拖动空白处旋转视角（已限位）· 滚轮缩放</div>
+
+    <!-- 操作工艺引导卡片：把"拿线 → 拔线 → 插线"的实训流程固化在页面上 -->
+    <div v-if="mode === 'wire'" class="craft-guide">
+      <div class="cg-title">🔧 接线工艺三步</div>
+      <div class="cg-step" :class="{ on: !draftText && !lifting }">
+        <span class="cg-n">①</span><span class="cg-t">拿线</span>
+        <span class="cg-d">点引脚/孔位拿起导线</span>
+      </div>
+      <div class="cg-step" :class="{ on: lifting }">
+        <span class="cg-n">②</span><span class="cg-t">拔线</span>
+        <span class="cg-d">点金属端头拔起（捏端头，勿拽线身）</span>
+      </div>
+      <div class="cg-step" :class="{ on: draftText && !lifting }">
+        <span class="cg-n">③</span><span class="cg-t">插线</span>
+        <span class="cg-d">对准孔位落下，端头插入到位</span>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -100,6 +125,8 @@ const mode = ref('drag')
 const draftText = ref('')
 const hoverText = ref('')
 const selectedWire = ref(null)
+/** 是否处于"拔线手持中"（拿起了导线端头） */
+const lifting = ref(false)
 
 let engine = null
 let observer = null
@@ -179,10 +206,12 @@ onMounted(() => {
       hoverText.value = desc || ''
     },
     onWireLift: (wire, end) => {
+      lifting.value = true
       emit('wire-lift', wire, end)
       emit('state-change')
     },
     onWireReattach: (wire) => {
+      lifting.value = false
       emit('wire-reattach', wire)
       emit('state-change')
     },
@@ -203,6 +232,7 @@ onMounted(() => {
       if (m !== 'wire') {
         draftText.value = ''
         hoverText.value = ''
+        lifting.value = false
       }
     },
   })
@@ -453,6 +483,67 @@ defineExpose({ engine: () => engine, toggleMode })
   color: rgba(157, 192, 230, 0.55);
   z-index: 4;
   pointer-events: none;
+}
+
+/* 接线工艺引导卡片（右下角，连线模式出现） */
+.craft-guide {
+  position: absolute;
+  right: 14px;
+  bottom: 36px;
+  width: 212px;
+  padding: 12px 13px;
+  border-radius: 14px;
+  background: rgba(13, 30, 54, 0.92);
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(8px);
+  z-index: 5;
+  pointer-events: none;
+}
+.cg-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #7dd3fc;
+  margin-bottom: 8px;
+  letter-spacing: 0.3px;
+}
+.cg-step {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 6px;
+  border-radius: 8px;
+  transition: background 0.16s;
+}
+.cg-step.on {
+  background: rgba(56, 189, 248, 0.14);
+}
+.cg-n {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: #0a1626;
+  background: #38bdf8;
+  border-radius: 50%;
+}
+.cg-step.on .cg-n {
+  background: #4ade80;
+}
+.cg-t {
+  font-size: 12px;
+  font-weight: 700;
+  color: #eaf3ff;
+  flex-shrink: 0;
+}
+.cg-d {
+  font-size: 10.5px;
+  color: #8fb3d4;
+  line-height: 1.4;
 }
 
 /* 选中导线后的操作条 */

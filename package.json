@@ -24,6 +24,8 @@
     "test:iso": "node scripts/tests/isomorphism.test.mjs",
     "test:tier": "node scripts/tests/tiered-grade.test.mjs",
     "test:craft": "node scripts/tests/wiring-craft.test.mjs",
+    "test:craftgrade": "node scripts/tests/craft-grade.test.mjs",
+    "test:fault": "node scripts/tests/fault-diagnosis.test.mjs",
     "test:fingerprint": "node scripts/tests/fingerprint.test.mjs",
     "test:insights": "node scripts/tests/insights.test.mjs",
     "test:diagnose": "node scripts/tests/diagnose.test.mjs",
@@ -31,7 +33,7 @@
     "test:ac": "node scripts/tests/ac-transient.test.mjs",
     "test:http": "node scripts/tests/records-http.test.mjs && node scripts/tests/analyze-http.test.mjs",
     "validate:grading": "node scripts/validate/grading-accuracy.mjs",
-    "check": "node scripts/check-core.mjs && node scripts/check-components.mjs && node scripts/check-graphmatch.mjs && node scripts/tests/grading.test.mjs && node scripts/tests/analysis.test.mjs && node scripts/tests/led-experiment.test.mjs && node scripts/tests/isomorphism.test.mjs && node scripts/tests/tiered-grade.test.mjs && node scripts/tests/wiring-craft.test.mjs && node scripts/tests/fingerprint.test.mjs && node scripts/tests/insights.test.mjs && node scripts/tests/diagnose.test.mjs && node scripts/tests/numeric-stability.test.mjs && node scripts/tests/ac-transient.test.mjs && node scripts/validate/grading-accuracy.mjs"
+    "check": "node scripts/check-core.mjs && node scripts/check-components.mjs && node scripts/check-graphmatch.mjs && node scripts/tests/grading.test.mjs && node scripts/tests/analysis.test.mjs && node scripts/tests/led-experiment.test.mjs && node scripts/tests/isomorphism.test.mjs && node scripts/tests/tiered-grade.test.mjs && node scripts/tests/wiring-craft.test.mjs && node scripts/tests/craft-grade.test.mjs && node scripts/tests/fault-diagnosis.test.mjs && node scripts/tests/fingerprint.test.mjs && node scripts/tests/insights.test.mjs && node scripts/tests/diagnose.test.mjs && node scripts/tests/numeric-stability.test.mjs && node scripts/tests/ac-transient.test.mjs && node scripts/validate/grading-accuracy.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^7.6.9",

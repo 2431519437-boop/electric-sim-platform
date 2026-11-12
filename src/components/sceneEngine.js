@@ -366,6 +366,59 @@ export class SceneEngine {
     this.handTip.rotation.x = -Math.PI / 2
     this.handTip.visible = false
     this.scene.add(this.handTip)
+
+    // ---- 镊子：连线/拔线模式下夹持导线端头，营造"拿线"的真实操作感 ----
+    this.tweezers = this._buildTweezers()
+    this.tweezers.visible = false
+    this.scene.add(this.tweezers)
+  }
+
+  /**
+   * 构建一把镊子（尖嘴钳造型）：两片弹性金属臂 + 尾部连接。
+   * 面向 -Z 的尖端用于"夹"端头；夹持张合由 _updateTweezers 里的 grab 程度驱动。
+   */
+  _buildTweezers() {
+    const g = new THREE.Group()
+    const steel = new THREE.MeshStandardMaterial({ color: 0xb9c4d1, metalness: 0.9, roughness: 0.28 })
+    const dark = new THREE.MeshStandardMaterial({ color: 0x64748b, metalness: 0.85, roughness: 0.35 })
+
+    const armGeo = new THREE.BoxGeometry(0.016, 0.012, 0.16)
+    // 左臂 / 右臂：绕尾端枢轴张开，尖端相向夹持
+    const armL = new THREE.Mesh(armGeo, steel)
+    const armR = new THREE.Mesh(armGeo, steel)
+    // 尖端收窄的小块（模拟镊子尖）
+    const tipGeo = new THREE.BoxGeometry(0.016, 0.012, 0.05)
+    const tipL = new THREE.Mesh(tipGeo, dark)
+    const tipR = new THREE.Mesh(tipGeo, dark)
+
+    for (const [arm, tip, side] of [
+      [armL, tipL, -1],
+      [armR, tipR, 1],
+    ]) {
+      arm.castShadow = true
+      tip.castShadow = true
+      // 以尾端为枢轴：臂沿 Z 向伸出，尖端在 -Z 侧
+      arm.position.set(side * 0.014, 0, -0.06)
+      tip.position.set(side * 0.014, 0, -0.155)
+      const pivot = new THREE.Group()
+      pivot.position.set(0, 0, 0.08)
+      g.add(pivot)
+      pivot.add(arm)
+      pivot.add(tip)
+      pivot.userData = { side }
+    }
+    // 尾部连接件
+    const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.016, 0.05, 12), dark)
+    tail.rotation.x = Math.PI / 2
+    tail.position.set(0, 0, 0.1)
+    tail.castShadow = true
+    g.add(tail)
+
+    // 记录两臂 pivot，便于夹持张合
+    g.userData.pivots = g.children.filter((c) => c.userData?.side !== undefined)
+    // 放大到与场景元件协调（原几何仅 0.16 长，放大 1.6 倍更醒目）
+    g.scale.setScalar(1.6)
+    return g
   }
 
   /** 手指弯曲：amount 0 张开 → 1 握紧 */
@@ -424,6 +477,57 @@ export class SceneEngine {
         this.handTip.position.set(this.pointerOnBoard.x, 0.008, this.pointerOnBoard.z)
         this.handTip.scale.setScalar(1 + Math.sin(t * 4) * 0.06)
       }
+    }
+
+    this._updateTweezers(t, dt)
+  }
+
+  /** 每帧更新镊子：仅在连线/拔线模式下可见，跟随"手持端"，张合夹持导线的端头 */
+  _updateTweezers(t, dt) {
+    if (!this.tweezers) return
+    const k = 1 - Math.exp(-Math.min(dt, 0.05) * 14)
+
+    // 显示条件：连线模式且（有新连线草稿 或 正在拔线改接）
+    const show = this.mode === 'wire' && (!!this.wireDraft || !!this.editing)
+    this.tweezers.visible = show
+    if (!show) return
+
+    // 夹持位置 = "手持端"（拔线中被提起的端头 / 新连线的预览端）
+    let holdPos = null
+    if (this.editing) {
+      const { wire, end } = this.editing
+      const tip = end === 'from' ? wire.tipA : wire.tipB
+      if (tip) holdPos = tip.position.clone()
+    } else if (this.pointerOnBoard) {
+      holdPos = this.pointerOnBoard.clone()
+      holdPos.y = Math.max(holdPos.y, 0.02) + 0.05
+    }
+    if (!holdPos) return
+
+    // 镊子尖端精确落在端头球上方，镊子身体斜向上后方（朝镜头）
+    // 尖端在局部坐标 z ≈ -0.18（放大 1.6 后约 -0.29）；把镊子整体放到"端头后上方"，
+    // 再用 lookAt 让尖端指向端头
+    const dir = new THREE.Vector3(0, 0.6, 0.85).normalize() // 斜向后上（朝向镜头+天空）
+    const target = holdPos.clone().add(dir.clone().multiplyScalar(0.3))
+    this.tweezers.position.lerp(target, k)
+
+    // 让尖端指向端头（镊子尖端沿 -Z 定义，lookAt 用目标点即可）
+    const look = holdPos.clone()
+    const up = new THREE.Vector3(0, 1, 0)
+    const curQuat = this.tweezers.quaternion.clone()
+    const wantQuat = new THREE.Quaternion().setFromRotationMatrix(
+      new THREE.Matrix4().lookAt(this.tweezers.position, look, up)
+    )
+    this.tweezers.quaternion.slerp(wantQuat, k)
+
+    // 夹持张合：拔线中/有草稿时夹紧（尖端并拢），否则微张
+    const wantGrip = this.editing ? 0.9 : 0.35
+    const grip = (this.tweezers.userData._grip =
+      (this.tweezers.userData._grip ?? 0.35) + (wantGrip - (this.tweezers.userData._grip ?? 0.35)) * k)
+    for (const p of this.tweezers.userData.pivots || []) {
+      const side = p.userData.side
+      // 尖端向中间靠拢：side=-1 左臂、+1 右臂，夹角随 grip 减小
+      p.rotation.y = side * (0.22 - grip * 0.22)
     }
   }
 
@@ -735,14 +839,16 @@ export class SceneEngine {
     // 导线两端的金属端头（香蕉插头）：
     // ① 视觉上更像真实导线；② 连线模式下点它可以"拔起来改接"
     const tipGeo = new THREE.SphereGeometry(0.021, 10, 8)
-    const tipMat = new THREE.MeshStandardMaterial({ color: 0xd8dee6, metalness: 0.85, roughness: 0.3 })
-    const tipA = new THREE.Mesh(tipGeo, tipMat)
-    const tipB = new THREE.Mesh(tipGeo, tipMat)
+    // 每个端头独立材质，便于"拔起/插入"时单独高亮与变色反馈
+    const tipMatA = new THREE.MeshStandardMaterial({ color: 0xd8dee6, metalness: 0.85, roughness: 0.3 })
+    const tipMatB = new THREE.MeshStandardMaterial({ color: 0xd8dee6, metalness: 0.85, roughness: 0.3 })
+    const tipA = new THREE.Mesh(tipGeo, tipMatA)
+    const tipB = new THREE.Mesh(tipGeo, tipMatB)
     tipA.raycast = () => {}
     tipB.raycast = () => {}
     this.scene.add(tipA)
     this.scene.add(tipB)
-    const wire = { id: `W${this.wireCounter}`, from, to, mesh, color, tipA, tipB }
+    const wire = { id: `W${this.wireCounter}`, from, to, mesh, color, tipA, tipB, lifted: null }
     this.scene.add(mesh)
     this.wires.push(wire)
     this._updateWireGeometry(wire)
@@ -770,7 +876,9 @@ export class SceneEngine {
       this.scene.remove(wire.tipA)
       this.scene.remove(wire.tipB)
       wire.tipA.geometry.dispose()
+      wire.tipB.geometry.dispose()
       wire.tipA.material.dispose()
+      wire.tipB.material.dispose()
     }
     wire.mesh.geometry.dispose()
     wire.mesh.material.dispose()
@@ -786,8 +894,18 @@ export class SceneEngine {
 
   /** 重算某条导线的悬垂弧线 */
   _updateWireGeometry(wire) {
-    const a = this.endpointPosition(wire.from)
-    const b = this.endpointPosition(wire.to)
+    let a = this.endpointPosition(wire.from)
+    let b = this.endpointPosition(wire.to)
+    // 手持态：被拔起的一端用端头球当前位置（悬空跟随鼠标）作为几何端点，
+    // 让导线本体"提着"的那一端跟着鼠标拉伸，而不是停回旧孔位。
+    if (wire.lifted) {
+      const tip = wire.lifted === 'from' ? wire.tipA : wire.tipB
+      if (tip) {
+        const heldPos = tip.position.clone()
+        if (wire.lifted === 'from') a = heldPos
+        else b = heldPos
+      }
+    }
     if (!a || !b) return
     const dist = a.distanceTo(b)
     // 弧高随距离自适应：越远拱得越高，但有上限
@@ -1261,11 +1379,11 @@ export class SceneEngine {
   /** 取消本次连线/改接：被拔起的线放回原位，草稿清理 */
   _cancelDraft({ silent = false } = {}) {
     if (this.editing) {
-      const { wire } = this.editing
+      const { wire, end } = this.editing
       this.editing = null
       wire.editing = false
-      wire.mesh.visible = true
-      if (wire.tipA) wire.tipA.visible = wire.tipB.visible = true
+      wire.lifted = null
+      this._setWireHeld(wire, end, false)
       this._updateWireGeometry(wire)
       this.hooks.onLog?.(`[拔线] ${wire.id} 已放回原位，未改动`)
     }
@@ -1278,14 +1396,51 @@ export class SceneEngine {
     const other = end === 'from' ? 'to' : 'from'
     this.editing = { wire, end }
     wire.editing = true
-    // 原来的线隐藏，由预览线"拿着"被拔起的这一端
-    wire.mesh.visible = false
-    if (wire.tipA) wire.tipA.visible = wire.tipB.visible = false
+    wire.lifted = end
+    // 导线不再隐身，而是进入"手持态"：整线高亮半透明、被拔起端头放大高亮
+    this._setWireHeld(wire, end, true)
     this._setDraft(wire[other])
+    // 插拔行程：端头从孔位"向上拔出"（纵向提拉），镊子夹持
+    this._playLiftTravel(wire, end)
     this.hooks.onLog?.(
       `[拔线] ${wire.id} 的「${this.describeEndpoint(wire[end])}」端已拔起，点新孔位/引脚复接；点空白放回原位`
     )
     this.hooks.onWireLift?.(wire, end)
+  }
+
+  /**
+   * 导线"手持态"视觉：被拔起的导线进入半透明高亮、被拔起的一端端头放大泛光。
+   * @param {object} wire
+   * @param {string} end  'from' | 'to'
+   * @param {boolean} held  true=手持（高亮半透明）/ false=恢复实心
+   */
+  _setWireHeld(wire, end, held) {
+    if (!wire?.mesh) return
+    const m = wire.mesh.material
+    if (held) {
+      m.transparent = true
+      m.opacity = 0.45
+      m.emissive = new THREE.Color(wire.color)
+      m.emissiveIntensity = 0.55
+    } else {
+      m.transparent = false
+      m.opacity = 1
+      m.emissive = new THREE.Color(0x000000)
+      m.emissiveIntensity = 1
+    }
+    // 被拔起的一端端头放大高亮（独立材质）
+    const tip = end === 'from' ? wire.tipA : wire.tipB
+    if (tip?.material) {
+      if (held) {
+        tip.scale.setScalar(1.6)
+        tip.material.emissive = new THREE.Color(0xfbbf24)
+        tip.material.emissiveIntensity = 0.9
+      } else {
+        tip.scale.setScalar(1)
+        tip.material.emissive = new THREE.Color(0x000000)
+        tip.material.emissiveIntensity = 1
+      }
+    }
   }
 
   /** 复接：把拔起的端头插到新位置 */
@@ -1293,8 +1448,8 @@ export class SceneEngine {
     const { wire, end } = this.editing
     this.editing = null
     wire.editing = false
-    wire.mesh.visible = true
-    if (wire.tipA) wire.tipA.visible = wire.tipB.visible = true
+    wire.lifted = null
+    this._setWireHeld(wire, end, false)
     // 插回原位 = 没有改动
     if (JSON.stringify(wire[end]) === JSON.stringify(ep)) {
       this._updateWireGeometry(wire)
@@ -1305,8 +1460,84 @@ export class SceneEngine {
     wire[end] = ep
     this._updateWireGeometry(wire)
     this._clearDraft()
+    // 插入行程 + 到位反馈
+    this._playInsertFeedback(wire, end)
     this.hooks.onLog?.(`[复接] ${wire.id} 改接到 ${this.describeEndpoint(ep)}`)
     this.hooks.onWireReattach?.(wire)
+  }
+
+  /**
+   * 拔起行程：端头从孔位"向上拔出"一小段（纵向提拉），
+   * 营造"捏着端头从孔里拔出来"的手感。动画期间端头短暂放大，到位后交给手持跟随。
+   */
+  _playLiftTravel(wire, end) {
+    const tip = end === 'from' ? wire.tipA : wire.tipB
+    if (!tip) return
+    const fromY = tip.position.y
+    const toY = fromY + 0.06 // 拔起行程高度
+    const start = performance.now()
+    const dur = 140 // ms
+    const tick = () => {
+      const t = Math.min(1, (performance.now() - start) / dur)
+      // 缓出：先快后慢，模拟"拔"的一下
+      const e = 1 - Math.pow(1 - t, 3)
+      tip.position.y = fromY + (toY - fromY) * e
+      if (t < 1) {
+        requestAnimationFrame(tick)
+      } else {
+        tip.position.y = toY
+      }
+    }
+    tick()
+  }
+
+  /**
+   * 插入行程动画 + 到位反馈：端头球从孔位上方"下插"到孔位（纵向位移），
+   * 到位后短暂泛绿弹性缩放，营造"端头插进孔里咔嚓到位"的实体感。
+   * 纯视觉，不改变几何与拓扑。
+   */
+  _playInsertFeedback(wire, end) {
+    const tip = end === 'from' ? wire.tipA : wire.tipB
+    if (!tip?.material) return
+    // 目标孔位高度（= 端头最终位置，此时几何已更新）
+    const toY = tip.position.y
+    const fromY = toY + 0.07 // 从孔位上方下插
+    tip.position.y = fromY
+    const start = performance.now()
+    const travelDur = 160 // 下插行程时长
+    const settleDur = 140 // 到位反馈（泛绿弹性）时长
+
+    const travel = () => {
+      const t = Math.min(1, (performance.now() - start) / travelDur)
+      // 缓入：模拟"插进"的加速感（下插越来越快，到底停下）
+      const e = t * t
+      tip.position.y = fromY + (toY - fromY) * e
+      if (t < 1) {
+        requestAnimationFrame(travel)
+      } else {
+        tip.position.y = toY
+        // 到位反馈
+        tip.material.color.setHex(0x22c55e)
+        tip.material.emissive = new THREE.Color(0x22c55e)
+        tip.material.emissiveIntensity = 0.7
+        const settleStart = performance.now()
+        const settle = () => {
+          const s = Math.min(1, (performance.now() - settleStart) / settleDur)
+          const scale = 1 + Math.sin(s * Math.PI) * 0.4
+          tip.scale.setScalar(scale)
+          if (s < 1) {
+            requestAnimationFrame(settle)
+          } else {
+            tip.scale.setScalar(1)
+            tip.material.color.setHex(0xd8dee6)
+            tip.material.emissive = new THREE.Color(0x000000)
+            tip.material.emissiveIntensity = 1
+          }
+        }
+        settle()
+      }
+    }
+    travel()
   }
 
   /** 拾取导线端头（拔线用）：NDC 距离判定，只命中金属端头小球 */
@@ -1374,6 +1605,21 @@ export class SceneEngine {
     this.draftMesh.geometry.dispose()
     this.draftMesh.geometry = new THREE.TubeGeometry(curve, 28, WIRE_RADIUS * 1.15, 6, false)
     this.draftMesh.visible = true
+
+    // 拔线手持态：被拔起的端头球跟随"手持端"悬空，导线本体跟着橡皮筋拉伸。
+    // 这样"拿在手里的那根线"始终可见，而不是隐身成一条预览线。
+    if (this.editing) {
+      const { wire, end } = this.editing
+      const tip = end === 'from' ? wire.tipA : wire.tipB
+      if (tip) {
+        const target = b.clone()
+        target.y += 0.05 // 略微抬起，模拟"提着端头"的姿态
+        // 平滑跟随（而非瞬移），让"拔起行程"动画自然过渡到手持跟随
+        tip.position.lerp(target, 0.45)
+      }
+      // 导线本体实时重算：从固定端到手持端
+      this._updateWireGeometry(wire)
+    }
   }
 
   /** 拾取端点：优先引脚，其次孔位 */

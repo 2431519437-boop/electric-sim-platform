@@ -8,6 +8,7 @@ dist-ssr/
 # 本地缓存 / 临时验证产物
 .npm-cache/
 .cache/
+.tmp/
 .tmp-build/
 .verify/
 .backup/

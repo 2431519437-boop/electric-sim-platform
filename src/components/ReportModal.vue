@@ -112,6 +112,28 @@
             </div>
           </div>
 
+          <!-- 工艺评分表（多维：安全 / 顺序 / 线色 / 手法 / 走线） -->
+          <template v-if="report.craftGrade && report.craftGrade.items && report.craftGrade.items.length">
+            <div class="sec-title warn-title">🛠 工艺评分表（操作工艺规范）</div>
+            <div class="diag-list">
+              <div
+                v-for="(d, i) in report.craftGrade.items"
+                :key="i"
+                class="diag-item"
+                :class="d.severity"
+              >
+                <span class="diag-sev">{{ d.severity === 'error' ? '✕' : d.severity === 'warn' ? '!' : 'ℹ' }}</span>
+                <div class="diag-body">
+                  <div class="diag-title">{{ d.title }}（-{{ d.penalty }} 分）</div>
+                  <div class="diag-detail">{{ d.detail }}</div>
+                </div>
+              </div>
+            </div>
+            <div class="note">
+              工艺评分小结：{{ report.craftGrade.summary }}
+            </div>
+          </template>
+
           <!-- 数据表 -->
           <div class="sec-title">测量数据与理论对比</div>
           <table class="data">
@@ -181,6 +203,7 @@ const props = defineProps({
       wiringText: '',
       procedureViolations: [],
       diagnostics: { ok: true, items: [], errorCount: 0, warnCount: 0, infoCount: 0, summary: '' },
+      craftGrade: { ok: true, items: [], totalPenalty: 0, errorCount: 0, warnCount: 0, infoCount: 0, summary: '' },
       // 分级判分相关
       rawScore: 0,
       tier: '',

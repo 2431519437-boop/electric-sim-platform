@@ -13,12 +13,14 @@ import { SPEC as seriesVoltageDivider } from './series-voltage-divider.js'
 import { SPEC as parallelCurrentDivider } from './parallel-current-divider.js'
 import { SPEC as ledCurrentLimiting } from './led-current-limiting.js'
 import { SPEC as wiringCraftTraining } from './wiring-craft-training.js'
+import { SPEC as faultDiagnosisTraining } from './fault-diagnosis-training.js'
 
 export const EXPERIMENTS = [
   seriesVoltageDivider,
   parallelCurrentDivider,
   ledCurrentLimiting,
   wiringCraftTraining,
+  faultDiagnosisTraining,
 ]
 
 export const DEFAULT_EXPERIMENT_ID = seriesVoltageDivider.id

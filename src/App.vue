@@ -62,6 +62,8 @@
           @drag-end="onDragEnd"
           @wire-created="onWireCreated"
           @wire-select="onWireSelect"
+          @wire-lift="onWireLift"
+          @wire-reattach="onWireReattach"
           @wire-remove="onWireRemove"
           @wire-erase="onWireErase"
           @wire-miss="onWireMiss"
@@ -167,6 +169,7 @@ import { computeReadings } from './circuit/readings.js'
 import { gradeTier, referenceResistorValue } from './circuit/tieredGrade.js'
 import { checkWiringProcedure, checkSafety } from './circuit/procedure.js'
 import { diagnose } from './circuit/diagnose.js'
+import { gradeCraft } from './circuit/craftGrade.js'
 import { trySnap } from './circuit/pinResolver.js'
 import AuthModal from './components/AuthModal.vue'
 import ServerModal from './components/ServerModal.vue'
@@ -270,6 +273,12 @@ const score = ref(experiment.value.scoring.base)
 const errors = ref(0)
 /** 规程违规记录（带电操作等）：[{ op, voltage, penalty, time }] */
 const procedureViolations = ref([])
+/** 工艺操作事件时序（供工艺评分表做顺序/手法判分） */
+const craftEvents = ref([])
+/** 最近一次拔线的导线 id 与手法（点端头 or 拽线身） */
+const lastPull = ref({ wireId: '', byTip: true })
+/** 工艺评分结果（多维评分表，从"判对错"到"评工艺"） */
+const craftGrade = ref({ ok: true, items: [], totalPenalty: 0, errorCount: 0, warnCount: 0, infoCount: 0, summary: '' })
 const startTime = ref(Date.now())
 const now = ref(Date.now())
 const logs = ref([])
@@ -532,6 +541,9 @@ function applyExperiment(spec, { log = true } = {}) {
 
   errors.value = 0
   procedureViolations.value = []
+  craftEvents.value = []
+  lastPull.value = { wireId: '', byTip: true }
+  craftGrade.value = { ok: true, items: [], totalPenalty: 0, errorCount: 0, warnCount: 0, infoCount: 0, summary: '' }
   score.value = spec.scoring.base
   solved.value = false
   circuitOk.value = false
@@ -629,9 +641,67 @@ function onWireCreated(wire) {
     'ok'
   )
   checkProcedure('接线')
+  craftEvents.value.push({ op: 'create', wireId: wire.id, time: Date.now() })
   recordChange()
   // 有导线变化后，如果已经计算过则重新计算
   if (solved.value) runAnalysis(true)
+}
+
+/** 拔线：采集操作时序 + 手法判分（是否点端头） */
+function onWireLift(wire, end) {
+  const byTip = !!end // end 参数存在 = 通过点金属端头拔起
+  lastPull.value = { wireId: wire.id, byTip }
+  craftEvents.value.push({ op: 'lift', wireId: wire.id, byTip, time: Date.now() })
+  checkProcedure('拔线')
+  if (!byTip) {
+    pushLog(`[手法] 拔线 ${wire.id} 时拽了线身，应捏住金属端头垂直拔出`, 'warn')
+  }
+  recordChange()
+}
+
+/** 复接：采集操作时序 */
+function onWireReattach(wire) {
+  craftEvents.value.push({ op: 'reattach', wireId: wire.id, time: Date.now() })
+  checkProcedure('复接')
+  pushLog(`[导线] ${wire.id} 已复接到新位置`, 'ok')
+  recordChange()
+  if (solved.value) runAnalysis(true)
+}
+
+/**
+ * 工艺评分表汇总：多维判分（安全/顺序/线色/手法/走线）。
+ * 在 runAnalysis 里调用，与诊断判分并列，落到 craftGrade 状态供报告展示。
+ */
+function refreshCraftGrade() {
+  const eng = engine.value
+  const spec = experiment.value
+  // 只有声明了 craft 段的实验才启用工艺评分（前 3 个理论实验不受影响）
+  if (!spec.craft) return
+  const wires = (eng?.wires || []).map((w) => ({ id: w.id, from: w.from, to: w.to, color: w.color }))
+  const posOf = (ep) => {
+    if (!ep) return null
+    const p = eng?.endpointPosition?.(ep)
+    return p ? { x: p.x, z: p.z } : null
+  }
+  const result = gradeCraft({
+    events: craftEvents.value,
+    wires,
+    rule: spec.craft.wireColor || {},
+    sourceVoltage: sourceVoltage.value,
+    current: currentI.value,
+    threshold: spec.procedure?.powerOffThreshold ?? 0.5,
+    maxCurrent: spec.safety?.maxCurrent ?? 0.03,
+    posOf,
+    pullByTip: lastPull.value.byTip,
+    lastPulledWire: lastPull.value.wireId,
+  })
+  craftGrade.value = result
+  if (result.items.length) {
+    result.items.forEach((it) => {
+      const tag = it.severity === 'error' ? '工艺' : it.severity === 'warn' ? '工艺提示' : '工艺信息'
+      pushLog(`[${tag}] ${it.title}：${it.detail}（-${it.penalty}）`, it.severity === 'error' ? 'err' : 'warn')
+    })
+  }
 }
 
 /**
@@ -680,6 +750,7 @@ function onWireRemove() {
   selectedWire.value = null
   pushLog(`[删除导线] ${w.id}  ${label}`, 'ok')
   checkProcedure('拔线')
+  craftEvents.value.push({ op: 'remove', wireId: w.id, time: Date.now() })
   showToast(`已删除导线 ${w.id}，可点「撤销」或 Ctrl+Z 恢复`, 'ok')
   recordChange()
   // 拓扑变了，已算过的结果要重算
@@ -696,6 +767,7 @@ function onWireErase(wire) {
   selectedWire.value = null
   pushLog(`[删除导线] ${id}  ${label}`, 'ok')
   checkProcedure('拔线')
+  craftEvents.value.push({ op: 'remove', wireId: id, time: Date.now() })
   showToast(`已删除导线 ${id}，可点「撤销」恢复`, 'ok')
   recordChange()
   if (solved.value) runAnalysis(true)
@@ -748,6 +820,7 @@ function onStateChange() {
 function setSelectedValue(v) {
   const c = selectedComp.value
   if (!c) return
+  const prev = c.state.value
   c.state.value = v
   if (c.def.type === 'RHEO') {
     c.state.value = Math.max(0, Math.min(c.def.maxValue, v))
@@ -757,6 +830,14 @@ function setSelectedValue(v) {
   // 电阻色环跟随阻值（外观即参数）
   c.group.userData.setBands?.(c.state.value)
   pushLog(`[参数] ${c.def.name} 设为 ${c.state.value}${c.def.unit || ''}`)
+  // 电源电压变化：采集断电/复电事件（供工艺评分表的操作顺序判分）
+  if (c.def.type === 'VSRC' || c.def.type === 'ACVSRC') {
+    const threshold = experiment.value.procedure?.powerOffThreshold ?? 0.5
+    const wasOn = prev > threshold
+    const isOn = c.state.value > threshold
+    if (wasOn && !isOn) craftEvents.value.push({ op: 'powerOff', voltage: c.state.value, time: Date.now() })
+    else if (!wasOn && isOn) craftEvents.value.push({ op: 'powerOn', voltage: c.state.value, time: Date.now() })
+  }
   stateTick.value++
   recordValueChange()
   if (solved.value) runAnalysis(true)
@@ -970,6 +1051,7 @@ async function runAnalysis(silent = false) {
   pushLog('━━━━ 分析完成 ━━━━', 'ok')
 
   refreshTier(sol.ok)
+  refreshCraftGrade()
 
   // 应用到 3D 场景（LED 点亮等）
   const solMap = new Map(sol.branchCurrents)
@@ -1043,6 +1125,7 @@ function applyRemoteAnalysis(res, silent) {
   pushLog(`━━━━ 分析完成（后端，${res.elapsedMs} ms）━━━━`, 'ok')
 
   refreshTier(!!a.solution?.ok)
+  refreshCraftGrade()
 
   // 同步 3D 场景（LED 亮度等）
   engine.value.applySolution({
@@ -1312,6 +1395,8 @@ function submitReport() {
     wireCount: engine.value.wires.length,
     errors: errors.value,
     procedureViolations: procedureViolations.value,
+    // 工艺评分表（多维：安全/顺序/线色/手法/走线）
+    craftGrade: craftGrade.value,
     timeText: timeText.value,
     grade: stars === 3 ? '优秀' : stars === 2 ? '良好' : '合格',
     netlistPreview: netlistText.value.split('\n').slice(0, 12).join('\n'),
