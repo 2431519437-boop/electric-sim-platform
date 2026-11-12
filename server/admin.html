@@ -45,6 +45,14 @@
   .login .row{margin-top:16px;display:flex;gap:10px}
   .msg{margin-top:12px;font-size:12.5px;color:#fca5a5}
   .ok-msg{margin-top:12px;font-size:12.5px;color:#bbf7d0}
+  .ins-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+  .ins-box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .ins-title{font-size:13px;font-weight:600;color:#bae6fd;margin-bottom:10px}
+  .bar{height:8px;background:rgba(125,211,252,.12);border-radius:20px;overflow:hidden}
+  .bar-fill{height:100%;border-radius:20px}
+  .audit-num{font-size:34px;font-weight:700;color:#22c55e}
+  .audit .hint{color:var(--muted)}
+  @media (max-width:760px){.ins-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -73,6 +81,11 @@
   <!-- 面板 -->
   <div id="panel" hidden>
     <div class="cards" id="cards"></div>
+
+    <section>
+      <h2>学情分析 <span class="hint">错误聚类 · 档位分布 · 完成率 · 判分审计覆盖</span></h2>
+      <div id="insights"></div>
+    </section>
 
     <section>
       <h2>最近实验记录 <span class="hint" id="rec-hint"></span></h2>
@@ -119,15 +132,98 @@ function fmtTime(iso) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
+const TIER_LABEL = {
+  exact: '完全正确', equivalent: '等效接线', valueOnly: '参数不符',
+  partial: '部分正确', wrong: '接线错误', ok: '接线正确',
+  'tier:exact': '完全正确', 'tier:equivalent': '等效接线', 'tier:valueOnly': '参数不符',
+  'tier:partial': '部分正确', 'tier:wrong': '接线错误',
+}
+
+function bar(pct, color) {
+  const w = Math.max(2, Math.round(pct * 100))
+  return `<div class="bar"><div class="bar-fill" style="width:${w}%;background:${color}"></div></div>`
+}
+
+function renderInsights(ins) {
+  if (!ins || ins.total === 0) {
+    $('insights').innerHTML = '<div class="empty">还没有学生提交报告，学情分析将在有数据后生成</div>'
+    return
+  }
+  const avg = ins.avgScore ?? '-'
+  const cover = Math.round((ins.auditCoverage ?? 0) * 100)
+
+  // 档位分布
+  const distRows = (ins.tierDistribution || []).map((d) => {
+    const label = TIER_LABEL[d.key] || d.key
+    return `<tr>
+      <td>${esc(label)}</td>
+      <td class="mono">${d.count}</td>
+      <td class="mono">${(d.ratio * 100).toFixed(1)}%</td>
+      <td style="min-width:140px">${bar(d.ratio, '#38bdf8')}</td>
+    </tr>`
+  }).join('')
+
+  // 错误聚类
+  const errRows = (ins.errorClusters || []).map((c) => {
+    const label = c.label && c.label !== c.key ? c.label : (TIER_LABEL[c.key] || c.key)
+    const samples = (c.sample || []).map((s) => `${esc(s.username)}(${s.score}分)`).join('、')
+    return `<tr>
+      <td>${esc(label)}</td>
+      <td class="mono">${c.count}</td>
+      <td class="mono">${(c.ratio * 100).toFixed(1)}%</td>
+      <td style="min-width:140px">${bar(c.ratio, '#ef4444')}</td>
+      <td class="hint">${samples || '-'}</td>
+    </tr>`
+  }).join('')
+
+  // 实验完成率
+  const expRows = (ins.perExperiment || []).map((e) => `<tr>
+    <td>${esc(e.key)}</td>
+    <td class="mono">${e.count}</td>
+    <td class="mono">${e.avgScore} 分</td>
+    <td class="mono">${(e.passRate * 100).toFixed(1)}%</td>
+  </tr>`).join('')
+
+  $('insights').innerHTML = `
+    <div class="ins-grid">
+      <div class="ins-box">
+        <div class="ins-title">判分档位分布</div>
+        ${distRows ? `<table><thead><tr><th>档位</th><th>人数</th><th>占比</th><th></th></tr></thead><tbody>${distRows}</tbody></table>` : '<div class="empty">无</div>'}
+      </div>
+      <div class="ins-box">
+        <div class="ins-title">常见错误聚类 <span class="hint">（同一错误人数越多，越需要重点讲解）</span></div>
+        ${errRows ? `<table><thead><tr><th>错误类型</th><th>人数</th><th>占比</th><th></th><th>示例</th></tr></thead><tbody>${errRows}</tbody></table>` : '<div class="empty">无错误</div>'}
+      </div>
+    </div>
+    <div class="ins-grid">
+      <div class="ins-box">
+        <div class="ins-title">各实验完成情况</div>
+        ${expRows ? `<table><thead><tr><th>实验</th><th>提交数</th><th>平均分</th><th>通过率</th></tr></thead><tbody>${expRows}</tbody></table>` : '<div class="empty">无</div>'}
+      </div>
+      <div class="ins-box">
+        <div class="ins-title">判分审计链</div>
+        <div class="audit">
+          <div class="audit-num">${cover}%</div>
+          <div class="hint">报告已覆盖判分指纹（可验证「分数与电路一致、算法版本一致」）</div>
+          <div style="margin-top:8px">${bar(cover / 100, '#22c55e')}</div>
+          <div class="hint" style="margin-top:10px">平均分 <b style="color:#e2f3ff;font-size:18px">${avg}</b> · 报告总数 <b style="color:#e2f3ff">${ins.total}</b></div>
+        </div>
+      </div>
+    </div>`
+}
+
 async function load() {
   const [ov, users] = await Promise.all([api('/api/admin/overview'), api('/api/admin/users')])
   const recs = await api('/api/admin/records')
+  const ins = await api('/api/admin/insights')
   const st = ov.stats || {}
 
   $('cards').innerHTML = [
     ['用户', st.users], ['记录', st.records], ['报告', st.reports],
     ['实验快照', st.experiments], ['在线会话', st.sessions],
   ].map(([k, v]) => `<div class="card"><div class="k">${k}</div><div class="v">${v ?? 0}</div></div>`).join('')
+
+  renderInsights(ins)
 
   const recRows = (recs.records || []).map((r) => `<tr>
     <td class="mono">${r.id}</td>

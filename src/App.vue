@@ -1245,6 +1245,9 @@ function submitReport() {
     netlistPreview: netlistText.value.split('\n').slice(0, 12).join('\n'),
     wiringOk: !!wiring.value?.ok,
     wiringText: wiring.value?.message || '未进行拓扑判定',
+    // 判分审计链：随报告入库，教师端可验证
+    fingerprint: wiring.value?.fingerprint ?? null,
+    experimentKey: experiment.value.id,
   })
   flowStep.value = 4
   reportVisible.value = true

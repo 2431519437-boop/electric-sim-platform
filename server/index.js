@@ -30,6 +30,7 @@ import {
   experimentList,
   experimentGet,
   overview,
+  insightsView,
 } from './store.js'
 import { listUsers, countUsers, listAllRecords } from './db.js'
 
@@ -340,6 +341,11 @@ const routes = {
   'GET /api/admin/records': async (req, res) => {
     if (!requireTeacher(req, res)) return
     sendJson(res, 200, { ok: true, records: listAllRecords(200) })
+  },
+
+  'GET /api/admin/insights': async (req, res) => {
+    if (!requireTeacher(req, res)) return
+    sendJson(res, 200, { ok: true, ...insightsView() })
   },
 }
 

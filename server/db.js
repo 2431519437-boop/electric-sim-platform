@@ -104,6 +104,13 @@ const MIGRATIONS = [
 
   CREATE INDEX IF NOT EXISTS idx_rec_user_exp ON records(user_id, experiment_key);
   `,
+
+  // v3：报告表加判分指纹（判分可信审计链）与实验标识
+  `
+  ALTER TABLE reports ADD COLUMN fingerprint TEXT;
+  ALTER TABLE reports ADD COLUMN experiment_key TEXT;
+  ALTER TABLE reports ADD COLUMN algo_version TEXT;
+  `,
 ]
 
 export function migrate() {
@@ -312,20 +319,28 @@ export function clearRecords(userId, experimentKey = null) {
 /* ---------------- 报告 ---------------- */
 
 export function saveReport(userId, report, experimentId = null) {
+  // 判分指纹与算法版本来自 report（前端本地计算或后端 analyze 返回），
+  // 未提供时回退到 payload 内嵌的 wiring.fingerprint，都没有则置 null（旧客户端兼容）。
+  const fp = report.fingerprint ?? report.payload?.wiring?.fingerprint ?? null
+  const algo = report.algoVersion ?? report.payload?.wiring?.algoVersion ?? null
+  const expKey = report.experimentKey ?? null
   const info = db
     .prepare(
       `INSERT INTO reports
-       (user_id, experiment_id, score, stars, grade, circuit_ok, wiring_ok, payload_json, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (user_id, experiment_id, experiment_key, score, stars, grade, circuit_ok, wiring_ok, fingerprint, algo_version, payload_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       userId,
       experimentId,
+      expKey,
       num(report.score),
       num(report.stars),
       report.grade ?? null,
       report.circuitOk ? 1 : 0,
       report.wiringOk ? 1 : 0,
+      fp,
+      algo,
       JSON.stringify(report),
       nowIso()
     )
@@ -335,7 +350,7 @@ export function saveReport(userId, report, experimentId = null) {
 export function listReports(userId) {
   return db
     .prepare(
-      `SELECT id, score, stars, grade, circuit_ok, wiring_ok, payload_json, created_at
+      `SELECT id, score, stars, grade, circuit_ok, wiring_ok, fingerprint, algo_version, payload_json, created_at
        FROM reports WHERE user_id = ? ORDER BY id DESC`
     )
     .all(userId)
@@ -346,6 +361,8 @@ export function listReports(userId) {
       grade: r.grade,
       circuitOk: !!r.circuit_ok,
       wiringOk: !!r.wiring_ok,
+      fingerprint: r.fingerprint,
+      algoVersion: r.algo_version,
       createdAt: r.created_at,
       payload: safeParse(r.payload_json),
     }))
@@ -373,6 +390,111 @@ export function listAllRecords(limit = 200) {
        ORDER BY r.id DESC LIMIT ?`
     )
     .all(limit)
+}
+
+/* ---------------- 学情分析（教师端洞察） ---------------- */
+
+/**
+ * 从报告 payload 里抽取「判定原因」作为错误归因键。
+ * payload 结构：{ tier, tierLabel, tierDetail, wiringText, ... }
+ * 没有这些字段时回退到 wiringOk 的二分类（对/错）。
+ */
+function reportErrorKey(payload, wiringOk) {
+  if (payload && typeof payload === 'object') {
+    const tier = payload.tier
+    if (tier) return `tier:${tier}`
+  }
+  return wiringOk ? 'ok' : 'wrong'
+}
+
+/** 属于「真错」、应进入错误聚类的档位（正确档位不进错误聚类） */
+const ERROR_TIERS = new Set(['wrong', 'partial'])
+
+/**
+ * 聚合全部学生报告，产出教学洞察：
+ *   - 判分档位分布（exact / equivalent / valueOnly / partial / wrong）
+ *   - 常见错误聚类（按 tier 归因，含占比与示例）
+ *   - 各实验完成率与平均分
+ *   - 判分审计链覆盖情况（有指纹的报告占比）
+ */
+export function insights() {
+  const rows = db
+    .prepare(
+      `SELECT r.score, r.stars, r.grade, r.circuit_ok, r.wiring_ok,
+              r.fingerprint, r.experiment_key, r.payload_json, r.created_at,
+              u.id AS user_id, u.username, u.display_name
+       FROM reports r JOIN users u ON u.id = r.user_id
+       ORDER BY r.id DESC`
+    )
+    .all()
+
+  const total = rows.length
+  if (total === 0) {
+    return { total: 0, tierDistribution: [], errorClusters: [], perExperiment: [], auditCoverage: 0, avgScore: null }
+  }
+
+  // 档位分布
+  const tierCount = new Map()
+  // 错误聚类（按归因键）
+  const errCount = new Map()
+  // 实验维度
+  const expMap = new Map()
+  // 审计覆盖
+  let withFp = 0
+  let scoreSum = 0
+
+  for (const r of rows) {
+    const payload = safeParse(r.payload_json)
+    const key = reportErrorKey(payload, !!r.wiring_ok)
+    tierCount.set(key, (tierCount.get(key) || 0) + 1)
+
+    // 只有「真错」档位（wrong / partial）才进错误聚类
+    const tier = payload?.tier || (r.wiring_ok ? 'ok' : 'wrong')
+    if (ERROR_TIERS.has(tier)) {
+      const label = payload?.tierLabel || payload?.wiringText || tier
+      const bucket = errCount.get(key) || { key, label, count: 0, sample: [] }
+      bucket.count += 1
+      if (bucket.sample.length < 3) bucket.sample.push({ username: r.username, score: r.score })
+      errCount.set(key, bucket)
+    }
+
+    // 实验维度：experiment_key 优先，回退 payload.experimentKey
+    const ek = r.experiment_key || payload?.experimentKey || 'unknown'
+    const exp = expMap.get(ek) || { key: ek, count: 0, scoreSum: 0, okCount: 0 }
+    exp.count += 1
+    exp.scoreSum += num(r.score) || 0
+    if (r.wiring_ok) exp.okCount += 1
+    expMap.set(ek, exp)
+
+    if (r.fingerprint) withFp += 1
+    scoreSum += num(r.score) || 0
+  }
+
+  const tierDistribution = [...tierCount.entries()]
+    .map(([key, count]) => ({ key, count, ratio: +(count / total).toFixed(3) }))
+    .sort((a, b) => b.count - a.count)
+
+  const errorClusters = [...errCount.values()]
+    .sort((a, b) => b.count - a.count)
+    .map((b) => ({ ...b, ratio: +(b.count / total).toFixed(3) }))
+
+  const perExperiment = [...expMap.values()]
+    .map((e) => ({
+      key: e.key,
+      count: e.count,
+      avgScore: +(e.scoreSum / e.count).toFixed(1),
+      passRate: +(e.okCount / e.count).toFixed(3),
+    }))
+    .sort((a, b) => b.count - a.count)
+
+  return {
+    total,
+    avgScore: +(scoreSum / total).toFixed(1),
+    auditCoverage: +(withFp / total).toFixed(3),
+    tierDistribution,
+    errorClusters,
+    perExperiment,
+  }
 }
 
 export function stats() {

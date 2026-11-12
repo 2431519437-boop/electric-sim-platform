@@ -76,6 +76,7 @@ npm run db:smoke       # 自测
 |---|---|---|
 | GET | `/api/admin/overview` | 统计 + 最近 20 条学生报告 |
 | GET | `/api/admin/users` | 全部用户 |
+| GET | `/api/admin/insights` | 学情分析：错误聚类 / 档位分布 / 完成率 / 审计覆盖 |
 
 错误统一返回 `{ok:false, error:"..."}`，状态码 `400/401/403/404/409/413/429/500`。
 
@@ -93,6 +94,33 @@ curl -X POST http://127.0.0.1:3001/api/records \
   -d '{"record":{"r2":470,"u":4.209,"i":8.955}}'
 ```
 
+## 两个系统级能力（答辩亮点）
+
+### 判分可信审计链
+
+每次电路判分都会生成一个**可验证指纹**，随报告一起入库：
+
+```
+fingerprint = sha256( 算法版本 | 实验ID | 拓扑规范形 | 标准答案 | 判定结论 )
+```
+
+- **规范形**：电路拓扑用轻量 Weisfeiler-Lehman 迭代重标号归一化，因此同一个电路
+  无论节点怎么编号、元件怎么排序、无极性元件引脚怎么交换，指纹都一致；
+- **可复现**：给定同一电路 + 同一算法版本，任何人重算都能得到同一指纹，
+  从而验证「分数与电路一致、算法版本一致、争议可追溯」；
+- 实现见 `src/circuit/fingerprint.js`（纯函数，与判分算法同层）。
+
+### 教师端学情分析
+
+`GET /api/admin/insights` 聚合全部学生报告，产出教学洞察：
+
+- **判分档位分布**：完全正确 / 等效接线 / 参数不符 / 部分正确 / 接线错误 的人数与占比
+- **常见错误聚类**：同一错误出现的人越多，越需要重点讲解（附示例学生）
+- **各实验完成率**：每实验的提交数、平均分、通过率
+- **审计覆盖**：有判分指纹的报告占比
+
+这让后端从「存数据的仓库」升级成「帮老师找教学盲点的决策工具」。
+
 ## 数据表
 
 | 表 | 关键字段 |
@@ -101,7 +129,7 @@ curl -X POST http://127.0.0.1:3001/api/records \
 | `sessions` | `token PK, user_id → users, created_at, expires_at` |
 | `experiments` | `id, user_id, name, state_json, created_at, updated_at` |
 | `records` | `id, user_id, experiment_id, seq, r2, u, i, u_theory, i_theory, created_at` |
-| `reports` | `id, user_id, experiment_id, score, stars, grade, circuit_ok, wiring_ok, payload_json, created_at` |
+| `reports` | `id, user_id, experiment_id, score, stars, grade, circuit_ok, wiring_ok, fingerprint, algo_version, payload_json, created_at` |
 
 外键开启 `ON DELETE CASCADE`，`PRAGMA user_version` 做版本化迁移，WAL 模式。
 

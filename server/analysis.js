@@ -14,6 +14,7 @@ import { generateNetlist, solveCircuit } from '../src/circuit/circuitCore.js'
 import { evaluateWiring } from '../src/circuit/graphMatch.js'
 import { computeReadings } from '../src/circuit/readings.js'
 import { getExperiment, DEFAULT_EXPERIMENT_ID } from '../src/experiments/index.js'
+import { computeFingerprint, ALGO_VERSION } from '../src/circuit/fingerprint.js'
 
 const isObj = (v) => v !== null && typeof v === 'object'
 const asArray = (v) => (Array.isArray(v) ? v : [])
@@ -101,6 +102,16 @@ export function analyze(payload) {
   const meters = computeReadings({ spec, components, nodeOf, solution: sol })
   const readings = { u: meters.u, i: meters.i }
 
+  // 7) 判分可信审计链：生成可验证指纹（拓扑规范形 + 算法版本 + 结论）
+  //    教师端据此验证「分数与电路一致、算法版本一致、争议可追溯」。
+  const fingerprint = computeFingerprint({
+    experimentId: spec.id,
+    wiringResult: wiring,
+    components,
+    nodeOf,
+    targetJson: JSON.stringify(spec.grading?.referenceCircuits || []),
+  })
+
   // 节点明细（教学展示用）
   const nodeList = nodes.map((n) => ({
     id: n.id,
@@ -137,6 +148,9 @@ export function analyze(payload) {
         missing: wiring.missing || [],
         extra: wiring.extra || [],
         liveEdgeCount: wiring.liveEdgeCount ?? 0,
+        // 判分审计链：指纹 + 算法版本，随报告一起入库
+        fingerprint,
+        algoVersion: ALGO_VERSION,
       },
       readings,
       sourceCompId: source?.id ?? null,

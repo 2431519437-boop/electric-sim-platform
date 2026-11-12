@@ -15,6 +15,7 @@ import {
   saveReport,
   stats,
   listAllReports,
+  insights,
 } from './db.js'
 
 /* ---------------- 实验记录 ---------------- */
@@ -64,4 +65,9 @@ export function experimentGet(userId, id) {
 
 export function overview() {
   return { stats: stats(), recentReports: listAllReports(20) }
+}
+
+/** 学情分析：教师端洞察（错误聚类 / 档位分布 / 完成率 / 审计覆盖） */
+export function insightsView() {
+  return insights()
 }
